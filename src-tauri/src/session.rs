@@ -117,3 +117,88 @@ fn build_markdown(utterances: &[Utterance], start_time: &DateTime<Local>) -> Str
 
     md
 }
+
+/// 저장된 모든 세션 목록 반환
+/// 최신순으로 정렬
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SessionInfo {
+    pub filename: String,  // "2025-01-20_14-30-45.md"
+    pub title: String,     // "Jan 20, 2:30 PM"
+    pub path: String,      // 절대 경로
+}
+
+pub fn list_sessions() -> Result<Vec<SessionInfo>> {
+    let dir = get_sessions_dir();
+    
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut sessions = Vec::new();
+
+    for entry in std::fs::read_dir(&dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        
+        if path.extension().map_or(false, |ext| ext == "md") {
+            if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
+                // 파일명에서 타임스탬프 파싱: "2025-01-20_14-30-45.md" → "Jan 20, 2:30 PM"
+                let title = format_session_title(filename);
+                
+                sessions.push(SessionInfo {
+                    filename: filename.to_string(),
+                    title,
+                    path: path.to_string_lossy().to_string(),
+                });
+            }
+        }
+    }
+
+    // 최신순 정렬 (역순)
+    sessions.sort_by(|a, b| b.filename.cmp(&a.filename));
+    
+    Ok(sessions)
+}
+
+fn format_session_title(filename: &str) -> String {
+    // "2025-01-20_14-30-45.md" → "Jan 20, 2:30 PM"
+    filename
+        .strip_suffix(".md")
+        .and_then(|s| {
+            let parts: Vec<&str> = s.split('_').collect();
+            if parts.len() == 2 {
+                let date = parts[0];
+                let time = parts[1];
+                
+                let date_parts: Vec<&str> = date.split('-').collect();
+                let time_parts: Vec<&str> = time.split('-').collect();
+                
+                if date_parts.len() == 3 && time_parts.len() == 3 {
+                    let month = date_parts[1];
+                    let day = date_parts[2];
+                    let hour = time_parts[0];
+                    let min = time_parts[1];
+                    
+                    let months = [
+                        "", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+                    ];
+                    
+                    if let (Ok(m), Ok(d), Ok(h), Ok(min_num)) =
+                        (month.parse::<usize>(), day.parse::<u32>(), hour.parse::<u32>(), min.parse::<u32>())
+                    {
+                        if m > 0 && m <= 12 {
+                            let am_pm = if h < 12 { "AM" } else { "PM" };
+                            let h12 = if h % 12 == 0 { 12 } else { h % 12 };
+                            return Some(format!(
+                                "{} {}, {}:{:02} {}",
+                                months[m], d, h12, min_num, am_pm
+                            ));
+                        }
+                    }
+                }
+            }
+            None
+        })
+        .unwrap_or_else(|| filename.to_string())
+}

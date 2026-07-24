@@ -17,6 +17,8 @@ pub fn run() {
             commands::stop_session,
             commands::get_utterances,
             commands::get_recording_status,
+            commands::list_sessions,
+            commands::read_session,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

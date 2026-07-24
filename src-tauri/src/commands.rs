@@ -250,3 +250,16 @@ pub fn get_utterances(state: State<'_, AppState>) -> Vec<session::Utterance> {
 pub fn get_recording_status(state: State<'_, AppState>) -> bool {
     state.is_recording.load(Ordering::SeqCst)
 }
+
+/// 저장된 모든 세션 목록 조회
+#[tauri::command]
+pub fn list_sessions() -> Result<Vec<session::SessionInfo>, String> {
+    session::list_sessions().map_err(|e| e.to_string())
+}
+
+/// 특정 세션 마크다운 내용 읽기
+#[tauri::command]
+pub fn read_session(path: String) -> Result<String, String> {
+    std::fs::read_to_string(&path)
+        .map_err(|e| format!("세션 읽기 실패: {}", e))
+}

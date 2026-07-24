@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "WTF English",
+  "productName": "Scoldler",
   "version": "0.1.0",
-  "identifier": "com.wtfenglish.app",
+  "identifier": "com.scoldler.app",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "WTF Wrong W/ My English",
+        "title": "Scoldler",
         "width": 900,
         "height": 700,
         "resizable": true,

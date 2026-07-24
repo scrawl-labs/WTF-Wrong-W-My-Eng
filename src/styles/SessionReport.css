@@ -1,212 +1,159 @@
-/* src/styles/SessionReport.css */
-
 .session-report {
   background: white;
-  border-radius: 10px;
-  box-shadow: var(--shadow-md);
-  transition: all 0.2s ease;
-  border: 1px solid var(--neutral-200);
-}
-
-.session-report.empty {
-  display: none;
-}
-
-.session-report.visible {
-  display: block;
+  border-radius: 12px;
+  padding: 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
 }
 
 .report-header {
-  padding: 1.25rem;
-  background: var(--neutral-100);
-  border-bottom: 1px solid var(--neutral-200);
-  border-radius: 10px 10px 0 0;
+  border-bottom: 1px solid #e5e5ea;
+  padding-bottom: 1.5rem;
 }
 
 .report-header h2 {
-  margin: 0 0 0.375rem 0;
-  color: var(--text-primary);
-  font-size: 1.25rem;
-  font-weight: 700;
-  letter-spacing: -0.01em;
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: #000000;
+  margin-bottom: 0.5rem;
 }
 
-.report-path {
-  font-size: 0.8125rem;
-  color: var(--text-secondary);
-  margin-top: 0.375rem;
+.report-header p {
+  font-size: 0.9375rem;
+  color: #8e8e93;
 }
 
-.report-path code {
-  background: white;
-  color: var(--primary);
-  padding: 0.25rem 0.5rem;
-  border-radius: 4px;
-  font-family: "Courier New", monospace;
-  font-size: 0.8em;
-}
-
-.report-summary {
+.summary-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 1rem;
-  padding: 1.25rem;
-  border-bottom: 1px solid var(--neutral-200);
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 1.5rem;
+  margin-bottom: 1rem;
 }
 
 .summary-item {
-  text-align: center;
-  padding: 0.5rem 0;
-}
-
-.summary-label {
-  font-size: 0.75rem;
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  margin-bottom: 0.375rem;
-}
-
-.summary-value {
-  font-size: 1.875rem;
-  font-weight: 700;
-  color: var(--primary);
-}
-
-.summary-value.error {
-  color: var(--error);
-}
-
-.report-section {
-  padding: 1.25rem;
-  border-bottom: 1px solid var(--neutral-200);
-}
-
-.report-section:last-child {
-  border-bottom: none;
-}
-
-.report-section h3 {
-  margin: 0 0 0.75rem 0;
-  font-size: 1rem;
-  font-weight: 700;
-  color: var(--text-primary);
-  letter-spacing: -0.01em;
-}
-
-.vocab-list {
-  list-style: none;
-  padding: 0;
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
 }
 
-.vocab-list li {
-  padding: 0.625rem 0.75rem;
-  background: #F0F4FF;
-  border-left: 2px solid #7C3AED;
-  border-radius: 6px;
-  color: var(--text-primary);
-  font-family: "Courier New", monospace;
-  font-size: 0.875rem;
+.summary-label {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: #8e8e93;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
-.corrections-list {
+.summary-value {
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: #5551ff;
+}
+
+.section {
   display: flex;
   flex-direction: column;
   gap: 1rem;
 }
 
-.correction-item {
-  padding: 0.875rem;
-  background: #FEE2E2;
-  border-left: 2px solid var(--error);
-  border-radius: 6px;
+.section-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #3c3c43;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
 }
 
-.correction-item .timestamp {
-  font-size: 0.75rem;
-  color: var(--text-secondary);
-  font-family: "Courier New", monospace;
-  margin-bottom: 0.375rem;
-}
-
-.correction-item .original {
-  color: var(--text-secondary);
-  font-style: italic;
-  margin-bottom: 0.375rem;
-  font-size: 0.875rem;
-}
-
-.correction-item .corrected {
-  color: #059669;
-  font-weight: 500;
-  margin-bottom: 0.25rem;
-  font-size: 0.875rem;
-}
-
-.correction-item .better {
-  color: var(--primary);
-  font-weight: 500;
-  font-size: 0.875rem;
-}
-
-.transcript-list {
+.vocab-list,
+.correction-list,
+.transcript-text {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
-  max-height: 400px;
+  gap: 0.75rem;
+  padding: 1rem;
+  background: #f2f2f7;
+  border-radius: 8px;
+  max-height: 300px;
   overflow-y: auto;
 }
 
-.transcript-item {
-  padding: 0.625rem 0.75rem;
-  background: var(--neutral-50);
+.vocab-item,
+.correction-item {
+  padding: 0.875rem;
+  background: white;
+  border-left: 3px solid #5551ff;
   border-radius: 6px;
-  display: flex;
-  gap: 0.75rem;
-  align-items: flex-start;
+  font-size: 0.9375rem;
+}
+
+.correction-item {
+  border-left-color: #ff3b30;
+}
+
+.vocab-item strong,
+.correction-item strong {
+  color: #000000;
+  font-weight: 600;
+}
+
+.vocab-item em,
+.correction-item em {
+  font-style: italic;
+  color: #8e8e93;
+}
+
+.transcript-text {
+  line-height: 1.8;
+  font-size: 0.9375rem;
+  color: #3c3c43;
+}
+
+.empty-state {
+  color: #8e8e93;
+  text-align: center;
+  padding: 2rem;
+  font-size: 0.9375rem;
+}
+
+/* 마크다운 뷰 스타일 */
+.session-report.markdown-view {
+  padding: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+.markdown-content {
+  background: var(--neutral-0);
+  border: 1px solid var(--neutral-200);
+  border-radius: 12px;
+  padding: 2rem;
+  font-family: "SF Mono", Monaco, "Cascadia Code", monospace;
   font-size: 0.875rem;
+  line-height: 1.6;
+  color: var(--neutral-900);
+  max-height: 600px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  margin: 0;
 }
 
-.transcript-item .time {
-  color: var(--text-secondary);
-  font-family: "Courier New", monospace;
-  font-weight: 600;
-  min-width: 60px;
-  flex-shrink: 0;
+.markdown-content::-webkit-scrollbar {
+  width: 6px;
 }
 
-.transcript-item .text {
-  flex: 1;
-  color: var(--text-primary);
+.markdown-content::-webkit-scrollbar-track {
+  background: transparent;
 }
 
-.transcript-item .badge {
-  display: inline-block;
-  padding: 0.2rem 0.5rem;
-  border-radius: 4px;
-  font-size: 0.7rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  white-space: nowrap;
-  flex-shrink: 0;
+.markdown-content::-webkit-scrollbar-thumb {
+  background: var(--neutral-300);
+  border-radius: 3px;
 }
 
-.transcript-item .badge.error {
-  background: #FEE2E2;
-  color: var(--error);
-}
-
-.transcript-item .badge.vocab {
-  background: #F0F4FF;
-  color: #7C3AED;
-}
-
-@media (max-width: 768px) {
-  .report-summary {
-    grid-template-columns: 1fr;
-  }
+.markdown-content::-webkit-scrollbar-thumb:hover {
+  background: var(--neutral-400);
 }

@@ -1,0 +1,148 @@
+/* SessionList.css */
+.session-list-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--neutral-0);
+  border-right: 1px solid var(--neutral-200);
+  overflow: hidden;
+  min-width: 240px;
+}
+
+.session-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem;
+  border-bottom: 1px solid var(--neutral-200);
+  flex-shrink: 0;
+}
+
+.session-list-header h2 {
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--neutral-900);
+}
+
+.btn-refresh {
+  background: transparent;
+  border: none;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  cursor: pointer;
+  color: var(--neutral-500);
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.btn-refresh:hover {
+  background: var(--neutral-100);
+  color: var(--primary);
+}
+
+.session-list {
+  list-style: none;
+  margin: 0;
+  padding: 0.5rem;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.session-item {
+  padding: 0.75rem 0.875rem;
+  margin-bottom: 0.5rem;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s;
+  border-left: 3px solid transparent;
+  background: var(--neutral-0);
+  border: 1px solid var(--neutral-200);
+}
+
+.session-item:hover {
+  background: var(--neutral-100);
+  border-color: var(--neutral-300);
+  border-left-color: var(--primary);
+}
+
+.session-item.selected {
+  background: var(--primary);
+  color: white;
+  border-color: var(--primary);
+  border-left-color: #4446ff;
+}
+
+.session-item-title {
+  font-size: 0.9375rem;
+  font-weight: 500;
+  margin-bottom: 0.25rem;
+}
+
+.session-item.selected .session-item-title {
+  color: white;
+}
+
+.session-item-filename {
+  font-size: 0.75rem;
+  opacity: 0.6;
+  font-family: "SF Mono", Monaco, "Cascadia Code", monospace;
+  margin-top: 0.25rem;
+}
+
+.session-item.selected .session-item-filename {
+  opacity: 0.85;
+  color: white;
+}
+
+.session-list-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  color: var(--neutral-500);
+  font-size: 0.9375rem;
+}
+
+.session-list-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  padding: 2rem 1rem;
+  text-align: center;
+  color: var(--neutral-500);
+}
+
+.session-list-empty p {
+  margin: 0.5rem 0;
+  font-size: 0.875rem;
+}
+
+.session-list-empty .hint {
+  font-size: 0.75rem;
+  opacity: 0.7;
+}
+
+/* 스크롤바 커스텀 */
+.session-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.session-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.session-list::-webkit-scrollbar-thumb {
+  background: var(--neutral-300);
+  border-radius: 3px;
+}
+
+.session-list::-webkit-scrollbar-thumb:hover {
+  background: var(--neutral-400);
+}
