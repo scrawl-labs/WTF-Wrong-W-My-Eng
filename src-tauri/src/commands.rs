@@ -32,6 +32,11 @@ pub struct AppState {
     /// 오디오 캡처 스레드 종료 신호 채널
     /// Sender를 Some으로 설정하면 오디오 스레드가 실행 중
     pub stop_tx: Arc<Mutex<Option<mpsc::Sender<()>>>>,
+
+    /// Whisper+피드백 처리 태스크의 핸들
+    /// stop_session에서 이 핸들을 await해 처리 큐가 다 빌 때까지 기다림
+    /// (그렇지 않으면 아직 전사/피드백 중인 발화가 리포트에서 누락됨)
+    pub processing_handle: Arc<Mutex<Option<tauri::async_runtime::JoinHandle<()>>>>,
 }
 
 impl Default for AppState {
@@ -41,6 +46,7 @@ impl Default for AppState {
             utterances: Arc::new(Mutex::new(Vec::new())),
             session_start: Arc::new(Mutex::new(None)),
             stop_tx: Arc::new(Mutex::new(None)),
+            processing_handle: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -114,13 +120,20 @@ pub async fn start_session(
     let (stop_tx, stop_rx) = mpsc::channel::<()>();
     *state.stop_tx.lock().unwrap() = Some(stop_tx);
 
+    // 오디오 캡처가 실제로 시작됐는지 확인하는 채널 (마이크 권한 실패 등을 프론트로 전달)
+    let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
+
     // ── 오디오 캡처 스레드 ────────────────────────────────────────────────────
     // cpal::Stream이 Send가 아닐 수 있으므로 별도 OS 스레드에서 소유
     std::thread::spawn(move || {
         let stream = match audio::start_capture(audio_tx) {
-            Ok(s) => s,
+            Ok(s) => {
+                let _ = ready_tx.send(Ok(()));
+                s
+            }
             Err(e) => {
                 eprintln!("[Audio Thread] 캡처 시작 실패: {e}");
+                let _ = ready_tx.send(Err(e.to_string()));
                 return;
             }
         };
@@ -131,21 +144,45 @@ pub async fn start_session(
         println!("[Audio Thread] 종료");
     });
 
+    // 캡처 스레드가 실제로 마이크를 열었는지 최대 3초 대기 후 확인
+    // (recv_timeout은 블로킹이므로 spawn_blocking으로 감싸 tokio 런타임을 막지 않음)
+    let capture_ready = tauri::async_runtime::spawn_blocking(move || {
+        ready_rx.recv_timeout(std::time::Duration::from_secs(3))
+    })
+    .await;
+
+    match capture_ready {
+        Ok(Ok(Ok(()))) => {
+            // 캡처 정상 시작
+        }
+        Ok(Ok(Err(e))) => {
+            state.is_recording.store(false, Ordering::SeqCst);
+            *state.stop_tx.lock().unwrap() = None;
+            return Err(format!(
+                "마이크 캡처를 시작할 수 없습니다: {e}\n\n시스템 설정 > 개인정보 보호 및 보안 > 마이크에서 Scoldler 권한을 확인해주세요."
+            ));
+        }
+        Ok(Err(_)) | Err(_) => {
+            state.is_recording.store(false, Ordering::SeqCst);
+            *state.stop_tx.lock().unwrap() = None;
+            return Err(
+                "마이크 캡처 시작 확인 시간이 초과됐습니다. 마이크 권한을 확인해주세요."
+                    .to_string(),
+            );
+        }
+    }
+
     // ── 처리 태스크 (async) ───────────────────────────────────────────────────
     // tauri::async_runtime::spawn: Tauri의 tokio 런타임에서 비동기 실행
-    let is_recording = Arc::clone(&state.is_recording);
     let utterances = Arc::clone(&state.utterances);
 
-    tauri::async_runtime::spawn(async move {
+    let handle = tauri::async_runtime::spawn(async move {
         println!("[Processing] 오디오 처리 시작");
 
         loop {
-            // 녹음이 중단되고 채널도 비었으면 종료
-            if !is_recording.load(Ordering::SeqCst) {
-                break;
-            }
-
             // try_recv: 블로킹 없이 데이터 확인
+            // 종료 조건은 오직 Disconnected뿐 - is_recording=false가 되어도
+            // 채널에 남은 오디오(아직 전사 안 된 마지막 발화들)를 끝까지 처리함
             match audio_rx.try_recv() {
                 Ok(audio_data) => {
                     // Whisper STT: CPU 집약적이므로 블로킹 스레드에서 실행
@@ -212,6 +249,8 @@ pub async fn start_session(
         println!("[Processing] 오디오 처리 종료");
     });
 
+    *state.processing_handle.lock().unwrap() = Some(handle);
+
     Ok(())
 }
 
@@ -224,7 +263,21 @@ pub async fn stop_session(state: State<'_, AppState>) -> Result<String, String> 
     state.is_recording.store(false, Ordering::SeqCst);
 
     // 오디오 스레드에 종료 신호 전송 (stop_tx를 drop하면 recv가 해제됨)
+    // → 캡처 스레드가 stream을 drop → audio_tx도 함께 drop → audio_rx가 결국 Disconnected
     *state.stop_tx.lock().unwrap() = None;
+
+    // 처리 태스크가 남은 오디오(전사/피드백 대기 중인 발화)를 모두 소진할 때까지 대기.
+    // 이게 없으면 방금 말한 마지막 발화가 리포트에서 누락될 수 있음.
+    // 최대 30초 타임아웃 - Whisper/Ollama가 멈춰도 앱이 무한 대기하지 않도록 방어
+    let handle = state.processing_handle.lock().unwrap().take();
+    if let Some(handle) = handle {
+        if tokio::time::timeout(std::time::Duration::from_secs(30), handle)
+            .await
+            .is_err()
+        {
+            eprintln!("[Session] 처리 태스크 대기 시간 초과 - 지금까지의 발화만 저장");
+        }
+    }
 
     let utterances = state.utterances.lock().unwrap().clone();
     let session_start = state.session_start.lock().unwrap().clone();
@@ -262,4 +315,24 @@ pub fn list_sessions() -> Result<Vec<session::SessionInfo>, String> {
 pub fn read_session(path: String) -> Result<String, String> {
     std::fs::read_to_string(&path)
         .map_err(|e| format!("세션 읽기 실패: {}", e))
+}
+
+/// 특정 세션의 구조화된 발화 기록 읽기 (JSON 사이드카)
+/// 라이브 리포트와 동일한 카드/표 UI로 렌더링하기 위해 사용.
+/// JSON이 없는 옛날 세션이면 빈 배열 반환 → 프론트에서 마크다운으로 폴백
+#[tauri::command]
+pub fn read_session_utterances(path: String) -> Result<Vec<session::Utterance>, String> {
+    session::read_utterances(&path).map_err(|e| e.to_string())
+}
+
+/// 세션 이름(제목) 변경
+#[tauri::command]
+pub fn rename_session(path: String, new_title: String) -> Result<(), String> {
+    session::rename_session(&path, &new_title).map_err(|e| e.to_string())
+}
+
+/// 세션 삭제
+#[tauri::command]
+pub fn delete_session(path: String) -> Result<(), String> {
+    session::delete_session(&path).map_err(|e| e.to_string())
 }

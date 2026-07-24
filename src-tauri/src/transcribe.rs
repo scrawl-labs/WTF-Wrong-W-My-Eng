@@ -8,7 +8,32 @@
 
 use anyhow::{Context, Result};
 use std::path::PathBuf;
+use std::sync::OnceLock;
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
+
+/// 로드된 Whisper 모델을 프로세스 전체에서 한 번만 로드해 재사용
+/// (모델 로드는 1.5GB 파일을 읽는 무거운 작업 - 발화마다 새로 로드하면 수 초씩 지연됨)
+static WHISPER_CTX: OnceLock<WhisperContext> = OnceLock::new();
+
+/// 캐시된 WhisperContext를 반환하거나, 없으면 최초 1회 로드
+fn get_or_init_context() -> Result<&'static WhisperContext> {
+    if let Some(ctx) = WHISPER_CTX.get() {
+        return Ok(ctx);
+    }
+
+    let model_path = get_model_path();
+    let ctx = WhisperContext::new_with_params(
+        model_path
+            .to_str()
+            .context("모델 경로가 유효한 UTF-8이 아닙니다")?,
+        WhisperContextParameters::default(),
+    )
+    .context("Whisper 모델 로드 실패")?;
+
+    // set()이 실패해도(다른 스레드가 동시에 먼저 로드) 문제 없음 - get()으로 재조회
+    let _ = WHISPER_CTX.set(ctx);
+    Ok(WHISPER_CTX.get().expect("방금 설정했으므로 항상 값이 존재함"))
+}
 
 /// Whisper 모델 저장 경로
 /// 우선순위:
@@ -47,19 +72,9 @@ pub fn is_model_ready() -> bool {
 /// # 에러
 /// 모델 파일 없음, Whisper 초기화 실패 등
 pub fn transcribe(audio: &[f32]) -> Result<String> {
-    let model_path = get_model_path();
+    let ctx = get_or_init_context()?;
 
-    // Context::new_with_params: 모델을 한 번 로드 (무거운 작업)
-    // 실제 앱에서는 전역으로 캐시하는 게 좋지만, 학습 목적으로 여기선 단순하게
-    let ctx = WhisperContext::new_with_params(
-        model_path
-            .to_str()
-            .context("모델 경로가 유효한 UTF-8이 아닙니다")?,
-        WhisperContextParameters::default(),
-    )
-    .context("Whisper 모델 로드 실패")?;
-
-    // State: 실제 추론에 사용되는 컨텍스트
+    // State: 실제 추론에 사용되는 컨텍스트 (호출마다 새로 생성 - 모델 자체는 캐시되어 공유됨)
     let mut state = ctx.create_state().context("Whisper 상태 생성 실패")?;
 
     // 추론 파라미터 설정

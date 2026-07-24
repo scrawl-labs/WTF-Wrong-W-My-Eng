@@ -108,11 +108,53 @@ export function App() {
     setUtterances([]);
     setSelectedSessionMarkdown("");
     try {
-      const content = await invoke<string>("read_session", {
-        path: session.path,
-      });
-      setSelectedSessionMarkdown(content);
+      // 구조화된 발화 기록(JSON)을 먼저 시도 - 라이브 리포트와 동일한 카드/표 UI로 보여줌
+      const sessionUtterances = await invoke<Utterance[]>(
+        "read_session_utterances",
+        { path: session.path },
+      );
+
+      if (sessionUtterances.length > 0) {
+        setUtterances(sessionUtterances);
+      } else {
+        // JSON 사이드카가 없는 옛날 세션 → 마크다운 원본으로 폴백
+        const content = await invoke<string>("read_session", {
+          path: session.path,
+        });
+        setSelectedSessionMarkdown(content);
+      }
       setShowReport(true);
+    } catch (err) {
+      setErrorMsg(String(err));
+    }
+  };
+
+  const handleRenameSession = async (
+    session: SessionInfo,
+    newTitle: string,
+  ) => {
+    try {
+      await invoke("rename_session", { path: session.path, newTitle });
+      setSessionRefreshKey((k) => k + 1);
+      const trimmed = newTitle.trim();
+      if (trimmed && selectedSession?.path === session.path) {
+        setSelectedSession({ ...selectedSession, title: trimmed });
+      }
+    } catch (err) {
+      setErrorMsg(String(err));
+    }
+  };
+
+  const handleDeleteSession = async (session: SessionInfo) => {
+    try {
+      await invoke("delete_session", { path: session.path });
+      setSessionRefreshKey((k) => k + 1);
+      if (selectedSession?.path === session.path) {
+        setSelectedSession(null);
+        setShowReport(false);
+        setUtterances([]);
+        setSelectedSessionMarkdown("");
+      }
     } catch (err) {
       setErrorMsg(String(err));
     }
@@ -131,6 +173,8 @@ export function App() {
       <SessionList
         selectedSession={selectedSession}
         onSelectSession={handleSelectSession}
+        onRenameSession={handleRenameSession}
+        onDeleteSession={handleDeleteSession}
         refreshKey={sessionRefreshKey}
       />
 
@@ -182,7 +226,7 @@ export function App() {
 
         <div className="flex flex-1 overflow-hidden">
           {/* 중앙 컨텐츠 */}
-          <main className="flex flex-col flex-1 overflow-y-auto px-6 py-6 bg-zinc-50 dark:bg-zinc-950">
+          <main className="flex flex-col flex-1 min-w-0 overflow-y-auto px-6 py-6 bg-zinc-50 dark:bg-zinc-950">
             {/* 에러 배너 */}
             {errorMsg && (
               <div className="flex items-start gap-3 mb-5 p-3.5 bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800/50 rounded-lg">
@@ -246,59 +290,57 @@ export function App() {
               </div>
             </div>
 
-            {/* 최근 세션 utterances 테이블 — 리포트 직후 표시 */}
-            {showReport &&
-              !selectedSessionMarkdown &&
-              utterances.length > 0 && (
-                <div className="mt-5 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl overflow-hidden">
-                  <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800">
-                    <h2 className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
-                      Transcript
-                    </h2>
-                  </div>
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="border-b border-zinc-100 dark:border-zinc-800">
-                        <th className="px-6 py-3 text-left font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wider">
-                          Time
-                        </th>
-                        <th className="px-6 py-3 text-left font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wider">
-                          You said
-                        </th>
-                        <th className="px-6 py-3 text-left font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wider">
-                          Status
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-zinc-50 dark:divide-zinc-800">
-                      {utterances.map((u, idx) => (
-                        <tr
-                          key={idx}
-                          className="hover:bg-zinc-50 dark:hover:bg-zinc-800/50"
-                        >
-                          <td className="px-6 py-3 font-mono text-zinc-400 dark:text-zinc-500 tabular-nums whitespace-nowrap">
-                            {u.timestamp}
-                          </td>
-                          <td className="px-6 py-3 text-zinc-700 dark:text-zinc-300">
-                            {u.feedback.original}
-                          </td>
-                          <td className="px-6 py-3">
-                            {u.feedback.has_error ? (
-                              <span className="inline-flex px-2 py-0.5 rounded text-xs font-medium bg-red-50 dark:bg-red-950 text-red-600 dark:text-red-400">
-                                Error
-                              </span>
-                            ) : (
-                              <span className="inline-flex px-2 py-0.5 rounded text-xs font-medium bg-emerald-50 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400">
-                                Good
-                              </span>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+            {/* 최근 세션 utterances 테이블 — 리포트 직후 또는 과거 세션 선택 시 표시 */}
+            {showReport && utterances.length > 0 && (
+              <div className="mt-5 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl overflow-hidden">
+                <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800">
+                  <h2 className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                    Transcript
+                  </h2>
                 </div>
-              )}
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-zinc-100 dark:border-zinc-800">
+                      <th className="px-6 py-3 text-left font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wider">
+                        Time
+                      </th>
+                      <th className="px-6 py-3 text-left font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wider">
+                        You said
+                      </th>
+                      <th className="px-6 py-3 text-left font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wider">
+                        Status
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-50 dark:divide-zinc-800">
+                    {utterances.map((u, idx) => (
+                      <tr
+                        key={idx}
+                        className="hover:bg-zinc-50 dark:hover:bg-zinc-800/50"
+                      >
+                        <td className="px-6 py-3 font-mono text-zinc-400 dark:text-zinc-500 tabular-nums whitespace-nowrap">
+                          {u.timestamp}
+                        </td>
+                        <td className="px-6 py-3 text-zinc-700 dark:text-zinc-300">
+                          {u.feedback.original}
+                        </td>
+                        <td className="px-6 py-3">
+                          {u.feedback.has_error ? (
+                            <span className="inline-flex px-2 py-0.5 rounded text-xs font-medium bg-red-50 dark:bg-red-950 text-red-600 dark:text-red-400">
+                              Error
+                            </span>
+                          ) : (
+                            <span className="inline-flex px-2 py-0.5 rounded text-xs font-medium bg-emerald-50 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400">
+                              Good
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </main>
 
           {/* 오른쪽 패널 */}

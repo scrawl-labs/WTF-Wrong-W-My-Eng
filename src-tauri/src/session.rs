@@ -38,14 +38,30 @@ pub fn save_report(utterances: &[Utterance], start_time: &DateTime<Local>) -> Re
     // create_dir_all: 중간 디렉터리도 모두 생성 (mkdir -p)
     std::fs::create_dir_all(&dir)?;
 
-    let filename = format!("{}.md", start_time.format("%Y-%m-%d_%H-%M-%S"));
-    let path = dir.join(&filename);
+    let base_name = start_time.format("%Y-%m-%d_%H-%M-%S").to_string();
+    let path = dir.join(format!("{base_name}.md"));
 
     let content = build_markdown(utterances, start_time);
     std::fs::write(&path, content)?;
 
+    // 마크다운과 별개로 발화 원본 데이터를 JSON으로도 저장
+    // → 나중에 이 세션을 다시 열 때, 라이브 리포트와 동일한 UI(카드/표)로 렌더링 가능
+    let json_path = dir.join(format!("{base_name}.json"));
+    std::fs::write(&json_path, serde_json::to_string_pretty(utterances)?)?;
+
     println!("[Session] 리포트 저장: {:?}", path);
     Ok(path)
+}
+
+/// 마크다운 파일 경로로부터 같은 세션의 JSON(구조화된 발화 기록)을 읽음
+/// 이 JSON이 없으면(이전 버전에서 저장된 세션) 빈 벡터 반환
+pub fn read_utterances(md_path: &str) -> Result<Vec<Utterance>> {
+    let json_path = PathBuf::from(md_path).with_extension("json");
+    if !json_path.exists() {
+        return Ok(Vec::new());
+    }
+    let content = std::fs::read_to_string(json_path)?;
+    Ok(serde_json::from_str(&content)?)
 }
 
 /// 마크다운 리포트 생성
@@ -142,9 +158,10 @@ pub fn list_sessions() -> Result<Vec<SessionInfo>> {
         
         if path.extension().map_or(false, |ext| ext == "md") {
             if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
-                // 파일명에서 타임스탬프 파싱: "2025-01-20_14-30-45.md" → "Jan 20, 2:30 PM"
-                let title = format_session_title(filename);
-                
+                // 사용자가 직접 지정한 이름(.title 사이드카)이 있으면 그것을, 없으면 타임스탬프에서 포맷팅한 제목을 사용
+                let title = read_custom_title(&path)
+                    .unwrap_or_else(|| format_session_title(filename));
+
                 sessions.push(SessionInfo {
                     filename: filename.to_string(),
                     title,
@@ -158,6 +175,37 @@ pub fn list_sessions() -> Result<Vec<SessionInfo>> {
     sessions.sort_by(|a, b| b.filename.cmp(&a.filename));
     
     Ok(sessions)
+}
+
+/// <base>.title 사이드카 파일에서 사용자 지정 제목을 읽음 (없으면 None)
+fn read_custom_title(md_path: &PathBuf) -> Option<String> {
+    let title_path = md_path.with_extension("title");
+    std::fs::read_to_string(title_path)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// 세션 이름 변경 - <base>.title 파일에 새 제목 저장
+pub fn rename_session(md_path: &str, new_title: &str) -> Result<()> {
+    let title_path = PathBuf::from(md_path).with_extension("title");
+    let trimmed = new_title.trim();
+    if trimmed.is_empty() {
+        // 빈 제목이면 사이드카를 지우고 기본 타임스탬프 제목으로 되돌림
+        let _ = std::fs::remove_file(title_path);
+        return Ok(());
+    }
+    std::fs::write(title_path, trimmed)?;
+    Ok(())
+}
+
+/// 세션 삭제 - .md, .json, .title 사이드카를 모두 삭제 (없는 파일은 무시)
+pub fn delete_session(md_path: &str) -> Result<()> {
+    let path = PathBuf::from(md_path);
+    let _ = std::fs::remove_file(path.with_extension("json"));
+    let _ = std::fs::remove_file(path.with_extension("title"));
+    std::fs::remove_file(&path)?;
+    Ok(())
 }
 
 fn format_session_title(filename: &str) -> String {

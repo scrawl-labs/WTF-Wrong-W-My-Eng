@@ -19,6 +19,9 @@ const OLLAMA_MODEL: &str = "llama3.1:8b";
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FeedbackResult {
     /// 내가 한 말 (원문)
+    /// LLM 응답 JSON에는 이 필드가 없고, 파싱 후 코드에서 직접 채워 넣음.
+    /// serde(default)가 없으면 필드 누락 시 deserialize 자체가 실패함.
+    #[serde(default)]
     pub original: String,
 
     /// 문법 교정 (오류 없으면 None)
