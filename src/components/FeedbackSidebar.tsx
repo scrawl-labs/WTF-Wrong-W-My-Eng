@@ -1,15 +1,18 @@
 // src/components/FeedbackSidebar.tsx
 // 실시간 피드백 패널 - 가장 최신 피드백 표시
 
-import { FeedbackEvent } from '../types';
-import '../styles/FeedbackSidebar.css';
+import { FeedbackEvent } from "../types";
+import "../styles/FeedbackSidebar.css";
 
 interface FeedbackSidebarProps {
   latestFeedback: FeedbackEvent | null;
   isVisible: boolean;
 }
 
-export function FeedbackSidebar({ latestFeedback, isVisible }: FeedbackSidebarProps) {
+export function FeedbackSidebar({
+  latestFeedback,
+  isVisible,
+}: FeedbackSidebarProps) {
   if (!isVisible || !latestFeedback) {
     return <div className="feedback-sidebar empty" />;
   }
@@ -42,7 +45,9 @@ export function FeedbackSidebar({ latestFeedback, isVisible }: FeedbackSidebarPr
         {feedback.better_expression && (
           <div className="feedback-section">
             <div className="section-label">💡 More Natural:</div>
-            <div className="section-text better">"{feedback.better_expression}"</div>
+            <div className="section-text better">
+              "{feedback.better_expression}"
+            </div>
           </div>
         )}
 

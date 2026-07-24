@@ -36,7 +36,7 @@
 .header-time {
   font-size: 0.85rem;
   color: #6b7280;
-  font-family: 'Courier New', monospace;
+  font-family: "Courier New", monospace;
 }
 
 .feedback-content {
@@ -71,7 +71,7 @@
   font-size: 0.95rem;
   line-height: 1.5;
   color: #1f2937;
-  font-family: 'Courier New', monospace;
+  font-family: "Courier New", monospace;
   word-break: break-word;
 }
 

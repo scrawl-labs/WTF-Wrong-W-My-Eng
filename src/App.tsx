@@ -1,40 +1,38 @@
-import { useEffect, useState } from 'react';
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
-import {
-  FeedbackEvent,
-  SetupStatus,
-  Utterance,
-} from './types';
-import { RecordingStatus } from './components/RecordingStatus';
-import { FeedbackSidebar } from './components/FeedbackSidebar';
-import { SessionReport } from './components/SessionReport';
-import './App.css';
+import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { FeedbackEvent, SetupStatus, Utterance } from "./types";
+import { RecordingStatus } from "./components/RecordingStatus";
+import { FeedbackSidebar } from "./components/FeedbackSidebar";
+import { SessionReport } from "./components/SessionReport";
+import "./App.css";
 
 export function App() {
   const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [sessionStartTime, setSessionStartTime] = useState<Date | null>(null);
-  const [latestFeedback, setLatestFeedback] = useState<FeedbackEvent | null>(null);
+  const [latestFeedback, setLatestFeedback] = useState<FeedbackEvent | null>(
+    null,
+  );
   const [utterances, setUtterances] = useState<Utterance[]>([]);
-  const [reportPath, setReportPath] = useState<string>('');
+  const [reportPath, setReportPath] = useState<string>("");
   const [showReport, setShowReport] = useState(false);
-  const [errorMsg, setErrorMsg] = useState('');
+  const [errorMsg, setErrorMsg] = useState("");
 
   // 초기화: 모델 준비 상태 확인
   useEffect(() => {
     const checkSetup = async () => {
       try {
-        const status = await invoke<SetupStatus>('check_setup');
+        const status = await invoke<SetupStatus>("check_setup");
         setSetupStatus(status);
 
         if (!status.model_ready) {
           setErrorMsg(
-            `⚠️ Whisper 모델이 준비되지 않았습니다.\n\n${status.download_instructions}`
+            `⚠️ Whisper 모델이 준비되지 않았습니다.\n\n${status.download_instructions}`,
           );
         }
       } catch (err) {
-        console.error('Setup check failed:', err);
+        console.error("Setup check failed:", err);
         setErrorMsg(`❌ 백엔드 에러: ${err}`);
       }
     };
@@ -44,12 +42,12 @@ export function App() {
 
   // 실시간 피드백 이벤트 수신
   useEffect(() => {
-    const unlistenPromise = listen<FeedbackEvent>('feedback', (event) => {
+    const unlistenPromise = listen<FeedbackEvent>("feedback", (event) => {
       setLatestFeedback(event.payload);
     });
 
     return () => {
-      unlistenPromise.then(unlisten => unlisten());
+      unlistenPromise.then((unlisten) => unlisten());
     };
   }, []);
 
@@ -57,15 +55,15 @@ export function App() {
   useEffect(() => {
     const checkStatus = async () => {
       try {
-        const recording = await invoke<boolean>('get_recording_status');
+        const recording = await invoke<boolean>("get_recording_status");
         setIsRecording(recording);
 
         if (recording) {
-          const utts = await invoke<Utterance[]>('get_utterances');
+          const utts = await invoke<Utterance[]>("get_utterances");
           setUtterances(utts);
         }
       } catch (err) {
-        console.error('Status check failed:', err);
+        console.error("Status check failed:", err);
       }
     };
 
@@ -74,15 +72,15 @@ export function App() {
   }, []);
 
   const handleStartSession = async () => {
-    setErrorMsg('');
+    setErrorMsg("");
     setShowReport(false);
     setLatestFeedback(null);
     setUtterances([]);
-    setReportPath('');
+    setReportPath("");
 
     try {
       setSessionStartTime(new Date());
-      await invoke('start_session');
+      await invoke("start_session");
       setIsRecording(true);
     } catch (err) {
       setErrorMsg(`❌ 세션 시작 실패:\n${err}`);
@@ -93,13 +91,13 @@ export function App() {
 
   const handleStopSession = async () => {
     try {
-      const path = await invoke<string>('stop_session');
+      const path = await invoke<string>("stop_session");
       setIsRecording(false);
       setReportPath(path);
       setShowReport(true);
 
       // 최종 발화 목록 로드
-      const utts = await invoke<Utterance[]>('get_utterances');
+      const utts = await invoke<Utterance[]>("get_utterances");
       setUtterances(utts);
     } catch (err) {
       setErrorMsg(`❌ 세션 종료 실패:\n${err}`);
@@ -113,7 +111,9 @@ export function App() {
       <header className="app-header">
         <div className="header-left">
           <h1>🎙️ WTF Wrong W/ My Eng</h1>
-          <p className="subtitle">Real-time English feedback during your lesson</p>
+          <p className="subtitle">
+            Real-time English feedback during your lesson
+          </p>
         </div>
         <div className="header-status">
           {isModelReady ? (
@@ -129,7 +129,7 @@ export function App() {
           {/* 에러 메시지 */}
           {errorMsg && (
             <div className="error-box">
-              <button className="error-close" onClick={() => setErrorMsg('')}>
+              <button className="error-close" onClick={() => setErrorMsg("")}>
                 ✕
               </button>
               <pre>{errorMsg}</pre>
@@ -149,7 +149,7 @@ export function App() {
                 onClick={handleStartSession}
                 disabled={isRecording || !isModelReady}
               >
-                {isRecording ? '🔴 Recording...' : '🎤 Start Session'}
+                {isRecording ? "🔴 Recording..." : "🎤 Start Session"}
               </button>
 
               <button
@@ -179,7 +179,8 @@ export function App() {
 
       <footer className="app-footer">
         <p>
-          💡 Tip: Keep Ollama running (<code>ollama serve</code>) in another terminal
+          💡 Tip: Keep Ollama running (<code>ollama serve</code>) in another
+          terminal
         </p>
       </footer>
     </div>

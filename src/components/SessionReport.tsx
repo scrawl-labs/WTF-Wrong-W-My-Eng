@@ -1,8 +1,8 @@
 // src/components/SessionReport.tsx
 // 세션 끝난 후 전체 리포트 표시
 
-import { Utterance } from '../types';
-import '../styles/SessionReport.css';
+import { Utterance } from "../types";
+import "../styles/SessionReport.css";
 
 interface SessionReportProps {
   utterances: Utterance[];
@@ -10,15 +10,19 @@ interface SessionReportProps {
   isVisible: boolean;
 }
 
-export function SessionReport({ utterances, reportPath, isVisible }: SessionReportProps) {
+export function SessionReport({
+  utterances,
+  reportPath,
+  isVisible,
+}: SessionReportProps) {
   if (!isVisible || utterances.length === 0) {
     return <div className="session-report empty" />;
   }
 
-  const errorCount = utterances.filter(u => u.feedback.has_error).length;
+  const errorCount = utterances.filter((u) => u.feedback.has_error).length;
   const vocabItems = utterances
-    .filter(u => u.feedback.idiom_or_vocab)
-    .map(u => u.feedback.idiom_or_vocab);
+    .filter((u) => u.feedback.idiom_or_vocab)
+    .map((u) => u.feedback.idiom_or_vocab);
 
   const uniqueVocab = [...new Set(vocabItems)];
 
@@ -66,7 +70,7 @@ export function SessionReport({ utterances, reportPath, isVisible }: SessionRepo
           <h3>🔴 Corrections</h3>
           <div className="corrections-list">
             {utterances
-              .filter(u => u.feedback.has_error)
+              .filter((u) => u.feedback.has_error)
               .map((u, idx) => (
                 <div key={idx} className="correction-item">
                   <div className="timestamp">{u.timestamp}</div>
@@ -75,7 +79,9 @@ export function SessionReport({ utterances, reportPath, isVisible }: SessionRepo
                     <div className="corrected">✓ "{u.feedback.corrected}"</div>
                   )}
                   {u.feedback.better_expression && (
-                    <div className="better">💡 "{u.feedback.better_expression}"</div>
+                    <div className="better">
+                      💡 "{u.feedback.better_expression}"
+                    </div>
                   )}
                 </div>
               ))}
@@ -91,8 +97,12 @@ export function SessionReport({ utterances, reportPath, isVisible }: SessionRepo
             <div key={idx} className="transcript-item">
               <span className="time">[{u.timestamp}]</span>
               <span className="text">{u.feedback.original}</span>
-              {u.feedback.has_error && <span className="badge error">Error</span>}
-              {u.feedback.idiom_or_vocab && <span className="badge vocab">Vocab</span>}
+              {u.feedback.has_error && (
+                <span className="badge error">Error</span>
+              )}
+              {u.feedback.idiom_or_vocab && (
+                <span className="badge vocab">Vocab</span>
+              )}
             </div>
           ))}
         </div>

@@ -28,7 +28,8 @@
 }
 
 @keyframes pulse {
-  0%, 100% {
+  0%,
+  100% {
     opacity: 1;
   }
   50% {
@@ -46,6 +47,6 @@
   font-size: 1.2rem;
   font-weight: 700;
   color: #2563eb;
-  font-family: 'Courier New', monospace;
+  font-family: "Courier New", monospace;
   letter-spacing: 0.1em;
 }

@@ -38,7 +38,7 @@
   background: rgba(0, 0, 0, 0.05);
   padding: 0.2rem 0.5rem;
   border-radius: 4px;
-  font-family: 'Courier New', monospace;
+  font-family: "Courier New", monospace;
 }
 
 .report-summary {
@@ -101,7 +101,7 @@
   border-left: 3px solid #7c3aed;
   border-radius: 4px;
   color: #1f2937;
-  font-family: 'Courier New', monospace;
+  font-family: "Courier New", monospace;
 }
 
 .corrections-list {
@@ -120,7 +120,7 @@
 .correction-item .timestamp {
   font-size: 0.85rem;
   color: #6b7280;
-  font-family: 'Courier New', monospace;
+  font-family: "Courier New", monospace;
   margin-bottom: 0.5rem;
 }
 
@@ -164,7 +164,7 @@
 
 .transcript-item .time {
   color: #6b7280;
-  font-family: 'Courier New', monospace;
+  font-family: "Courier New", monospace;
   font-weight: 600;
   min-width: 70px;
 }
