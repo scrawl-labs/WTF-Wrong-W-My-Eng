@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "tauri-appwtf-english",
+  "productName": "WTF English",
   "version": "0.1.0",
   "identifier": "com.wtfenglish.app",
   "build": {
@@ -12,9 +12,11 @@
   "app": {
     "windows": [
       {
-        "title": "tauri-appwtf-english",
-        "width": 800,
-        "height": 600
+        "title": "WTF Wrong W/ My English",
+        "width": 900,
+        "height": 700,
+        "resizable": true,
+        "fullscreen": false
       }
     ],
     "security": {

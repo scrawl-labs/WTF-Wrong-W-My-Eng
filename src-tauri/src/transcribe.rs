@@ -11,8 +11,22 @@ use std::path::PathBuf;
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
 /// Whisper 모델 저장 경로
-/// ~/.wtf-english/models/ggml-medium.en.bin
+/// 우선순위:
+/// 1. 번들된 경로 (app.asar/resources/models/ggml-medium.en.bin) - DMG 설치
+/// 2. 사용자 홈 경로 (~/.wtf-english/models/ggml-medium.en.bin) - 다운로드
 pub fn get_model_path() -> PathBuf {
+    // 번들된 모델 경로 (DMG 설치 시)
+    let bundled_path = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|p| p.to_path_buf()))
+        .map(|app_dir| app_dir.join("../Resources/models/ggml-medium.en.bin"))
+        .filter(|p| p.exists());
+    
+    if let Some(path) = bundled_path {
+        return path;
+    }
+    
+    // 사용자 홈 경로 (다운로드)
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".wtf-english")
