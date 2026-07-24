@@ -1,0 +1,51 @@
+/* src/styles/RecordingStatus.css */
+
+.recording-status {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+}
+
+.status-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  animation: pulse 1.5s infinite;
+}
+
+.dot.recording {
+  background-color: #ef4444;
+}
+
+.dot.idle {
+  background-color: #9ca3af;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.label {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.timer {
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: #2563eb;
+  font-family: 'Courier New', monospace;
+  letter-spacing: 0.1em;
+}
