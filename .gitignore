@@ -22,3 +22,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Local model artifacts
+build-assets/models/*.bin
+
+# Tauri build outputs
+src-tauri/target/
