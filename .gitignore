@@ -28,3 +28,4 @@ build-assets/models/*.bin
 
 # Tauri build outputs
 src-tauri/target/
+.gstack/
