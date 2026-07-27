@@ -6,10 +6,16 @@
 // - Result<T, E>와 ? 연산자: 에러 전파
 // - Option<T>: 값이 있을 수도 없을 수도 있는 타입
 
+use crate::setup::emit_progress;
 use anyhow::{Context, Result};
+use futures_util::StreamExt;
 use std::path::PathBuf;
 use std::sync::OnceLock;
+use tauri::AppHandle;
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
+
+const WHISPER_MODEL_URL: &str =
+    "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.en.bin";
 
 /// 로드된 Whisper 모델을 프로세스 전체에서 한 번만 로드해 재사용
 /// (모델 로드는 1.5GB 파일을 읽는 무거운 작업 - 발화마다 새로 로드하면 수 초씩 지연됨)
@@ -98,7 +104,66 @@ pub fn transcribe(audio: &[f32]) -> Result<String> {
     Ok(text.trim().to_string())
 }
 
-/// 모델 다운로드 안내 메시지 반환
+/// Whisper 모델이 없으면 자동으로 다운로드 (비개발자가 터미널에서 curl을 직접
+/// 칠 필요가 없도록). 이미 있으면 즉시 반환. 진행률은 "setup-progress" 이벤트로 emit됨.
+pub async fn ensure_model_downloaded(app: &AppHandle) -> Result<()> {
+    if is_model_ready() {
+        return Ok(());
+    }
+
+    let path = get_model_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).context("모델 저장 디렉터리 생성 실패")?;
+    }
+
+    emit_progress(
+        app,
+        "downloading_whisper_model",
+        "Downloading speech recognition model…",
+        0.0,
+    );
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(WHISPER_MODEL_URL)
+        .send()
+        .await
+        .context("Whisper 모델 다운로드 요청 실패")?;
+    let total = resp.content_length().unwrap_or(0);
+    let mut downloaded: u64 = 0;
+
+    // 완료 전 중단되면 절반 받다 만 파일이 "설치됨"으로 오인되지 않도록 임시 경로에 받고 마지막에 옮김
+    let tmp_path = path.with_extension("bin.downloading");
+    let mut file = tokio::fs::File::create(&tmp_path)
+        .await
+        .context("임시 파일 생성 실패")?;
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.context("다운로드 중 오류")?;
+        tokio::io::AsyncWriteExt::write_all(&mut file, &chunk)
+            .await
+            .context("파일 쓰기 실패")?;
+        downloaded += chunk.len() as u64;
+        let percent = if total > 0 {
+            (downloaded as f32 / total as f32) * 100.0
+        } else {
+            -1.0
+        };
+        emit_progress(
+            app,
+            "downloading_whisper_model",
+            "Downloading speech recognition model…",
+            percent,
+        );
+    }
+    drop(file);
+
+    std::fs::rename(&tmp_path, &path).context("다운로드한 모델 파일 이동 실패")?;
+
+    Ok(())
+}
+
+/// 모델 다운로드 안내 메시지 반환 - 자동 다운로드가 실패했을 때의 수동 폴백 안내
 pub fn model_download_instructions() -> String {
     let path = get_model_path();
     format!(

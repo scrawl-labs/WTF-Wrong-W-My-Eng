@@ -8,12 +8,11 @@
 // - tauri::State: 앱 전역 상태 주입
 
 use crate::{audio, feedback, session, transcribe};
-use serde::Serialize;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     mpsc, Arc, Mutex,
 };
-use tauri::State;
+use tauri::{AppHandle, State};
 
 // ─── 앱 전역 상태 ────────────────────────────────────────────────────────────
 
@@ -40,6 +39,9 @@ pub struct AppState {
     /// stop_session에서 이 핸들을 await해 처리 큐가 다 빌 때까지 기다림
     /// (그렇지 않으면 아직 전사/피드백 중인 발화가 리포트에서 누락됨)
     pub processing_handle: Arc<Mutex<Option<tauri::async_runtime::JoinHandle<()>>>>,
+
+    /// 백그라운드로 띄운 `ollama serve` 프로세스 - 앱 종료 시 kill해서 고아 프로세스 방지
+    pub ollama_process: Arc<Mutex<Option<std::process::Child>>>,
 }
 
 impl Default for AppState {
@@ -51,35 +53,28 @@ impl Default for AppState {
             session_start: Arc::new(Mutex::new(None)),
             stop_tx: Arc::new(Mutex::new(None)),
             processing_handle: Arc::new(Mutex::new(None)),
+            ollama_process: Arc::new(Mutex::new(None)),
         }
     }
 }
 
-/// 사전 준비 상태 확인 결과
-#[derive(Debug, Serialize)]
-pub struct SetupStatus {
-    pub model_ready: bool,
-    pub model_path: String,
-    pub download_instructions: String,
-}
-
 // ─── Tauri 커맨드들 ───────────────────────────────────────────────────────────
 
-/// Whisper 모델 준비 상태 확인
+/// 첫 실행 설치 전체를 한번에 처리: Whisper 모델 다운로드(필요 시) →
+/// Ollama 런타임 설치/서버 기동 → LLM 모델 다운로드(필요 시).
+/// 진행 상황은 "setup-progress" 이벤트로 계속 emit되므로, 프론트는 invoke 완료를
+/// 기다리는 동안 그 이벤트를 구독해 진행률 UI를 그리면 됨.
+/// 이미 다 준비돼 있으면 각 단계를 건너뛰고 빠르게 끝남 - 앱 켤 때마다 안전하게 호출 가능.
 #[tauri::command]
-pub fn check_setup() -> SetupStatus {
-    let model_ready = transcribe::is_model_ready();
-    SetupStatus {
-        model_ready,
-        model_path: transcribe::get_model_path()
-            .to_string_lossy()
-            .to_string(),
-        download_instructions: if model_ready {
-            String::new()
-        } else {
-            transcribe::model_download_instructions()
-        },
+pub async fn run_setup(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    // 이미 이 프로세스에서 Ollama 서버를 띄워뒀다면 다시 기동할 필요 없음
+    if state.ollama_process.lock().unwrap().is_some() {
+        return Ok(());
     }
+
+    let child = crate::setup::run(&app).await.map_err(|e| e.to_string())?;
+    *state.ollama_process.lock().unwrap() = Some(child);
+    Ok(())
 }
 
 /// 영어 수업 세션 시작

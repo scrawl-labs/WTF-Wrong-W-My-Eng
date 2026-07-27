@@ -5596,6 +5596,7 @@ dependencies = [
  "chrono",
  "cpal",
  "dirs 5.0.1",
+ "futures-util",
  "hound",
  "reqwest 0.12.28",
  "serde",

@@ -44,4 +44,5 @@ anyhow = "1"
 
 # Home directory path resolution
 dirs = "5"
+futures-util = "0.3.33"
 

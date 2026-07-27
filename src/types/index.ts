@@ -20,15 +20,24 @@ export interface RawUtterance {
   text: string;
 }
 
-export interface SetupStatus {
-  model_ready: boolean;
-  model_path: string;
-  download_instructions: string;
-}
-
 // 전체 세션 합산 통계 - idle 화면 대시보드용
 export interface Stats {
   total_sessions: number;
   total_utterances: number;
   total_corrections: number;
+}
+
+// 첫 실행 설치(Whisper 모델 + Ollama 런타임/서버 + LLM 모델) 진행 상태
+// "setup-progress" 이벤트 페이로드
+export interface SetupProgress {
+  stage:
+    | "downloading_whisper_model"
+    | "downloading_ollama_runtime"
+    | "extracting"
+    | "starting_server"
+    | "downloading_llm_model"
+    | "ready";
+  message: string;
+  // 0.0~100.0, 알 수 없으면 -1 (인디터미닛 표시)
+  percent: number;
 }

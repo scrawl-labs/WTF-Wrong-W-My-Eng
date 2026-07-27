@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { RawUtterance, SetupStatus, Stats, Utterance } from "./types";
+import { listen } from "@tauri-apps/api/event";
+import { RawUtterance, SetupProgress, Stats, Utterance } from "./types";
 import { RecordingStatus } from "./components/RecordingStatus";
 import { TranscriptView } from "./components/TranscriptView";
 import { SessionReport } from "./components/SessionReport";
@@ -17,7 +18,6 @@ import {
 import "./App.css";
 
 export function App() {
-  const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [sessionStartTime, setSessionStartTime] = useState<Date | null>(null);
   const [liveTranscript, setLiveTranscript] = useState<RawUtterance[]>([]);
@@ -35,6 +35,9 @@ export function App() {
     useState<string>("");
   const [sessionRefreshKey, setSessionRefreshKey] = useState(0);
   const [stats, setStats] = useState<Stats | null>(null);
+  const [setupProgress, setSetupProgress] = useState<SetupProgress | null>(
+    null,
+  );
   const [isDark, setIsDark] = useState(
     () => window.matchMedia("(prefers-color-scheme: dark)").matches,
   );
@@ -43,13 +46,18 @@ export function App() {
     document.documentElement.classList.toggle("dark", isDark);
   }, [isDark]);
 
+  // 첫 실행 설치(Whisper 모델 + Ollama 런타임/서버 + LLM 모델) - 비개발자도
+  // 터미널 없이 쓸 수 있도록 앱이 알아서 처리하고, 진행 상황을 "setup-progress"
+  // 이벤트로 받아 화면에 표시. 이미 준비돼 있으면 커맨드가 거의 즉시 끝나서
+  // 화면이 잠깐 스치듯 지나감.
   useEffect(() => {
-    invoke<SetupStatus>("check_setup")
-      .then((status) => {
-        setSetupStatus(status);
-        if (!status.model_ready) setErrorMsg(status.download_instructions);
-      })
-      .catch((err) => setErrorMsg(String(err)));
+    const p = listen<SetupProgress>("setup-progress", (e) =>
+      setSetupProgress(e.payload),
+    );
+    invoke("run_setup").catch((err) => setErrorMsg(String(err)));
+    return () => {
+      p.then((u) => u());
+    };
   }, []);
 
   // idle 화면 통계 대시보드 - 세션이 새로 생기거나 지워질 때마다(sessionRefreshKey) 재계산
@@ -198,9 +206,9 @@ export function App() {
     }
   };
 
-  const isModelReady = setupStatus?.model_ready ?? false;
+  const isSetupReady = setupProgress?.stage === "ready";
   const canViewTranscript = isRecording || showReport;
-  const newSessionDisabled = isRecording || isGeneratingReport || !isModelReady;
+  const newSessionDisabled = isRecording || isGeneratingReport || !isSetupReady;
   const rightPanelTitle = showTranscript
     ? "Transcript"
     : isGeneratingReport
@@ -213,6 +221,29 @@ export function App() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-white dark:bg-zinc-900 font-sans antialiased">
+      {/* ── 첫 실행 설치 진행 화면 - 준비될 때까지 전체 화면을 덮음 ── */}
+      {!isSetupReady && (
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-4 bg-white dark:bg-zinc-900">
+          <ArrowPathIcon className="w-6 h-6 text-zinc-400 dark:text-zinc-600 animate-spin" />
+          <p className="text-sm text-zinc-600 dark:text-zinc-400">
+            {setupProgress?.message ?? "Starting up…"}
+          </p>
+          {setupProgress && setupProgress.percent >= 0 && (
+            <div className="w-64">
+              <div className="h-1.5 bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-zinc-900 dark:bg-white transition-[width] duration-300"
+                  style={{ width: `${setupProgress.percent}%` }}
+                />
+              </div>
+              <p className="text-xs text-zinc-400 dark:text-zinc-600 text-center mt-2 tabular-nums">
+                {Math.round(setupProgress.percent)}%
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ── 다크 사이드바 ────────────────── */}
       <SessionList
         selectedSession={selectedSession}
@@ -252,11 +283,11 @@ export function App() {
             <div className="flex items-center gap-1.5">
               <span
                 className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                  isModelReady ? "bg-emerald-500" : "bg-amber-500"
+                  isSetupReady ? "bg-emerald-500" : "bg-amber-500"
                 }`}
               />
               <span className="text-xs text-zinc-500 dark:text-zinc-400">
-                {isModelReady ? "Model ready" : "Setup required"}
+                {isSetupReady ? "Model ready" : "Setting up…"}
               </span>
             </div>
             <button
