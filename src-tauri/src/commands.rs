@@ -8,12 +8,12 @@
 // - tauri::State: 앱 전역 상태 주입
 
 use crate::{audio, feedback, session, transcribe};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     mpsc, Arc, Mutex,
 };
-use tauri::{AppHandle, Emitter, State};
+use tauri::State;
 
 // ─── 앱 전역 상태 ────────────────────────────────────────────────────────────
 
@@ -23,8 +23,11 @@ pub struct AppState {
     /// 녹음 중 여부 (원자적 bool - 락 없이 안전)
     pub is_recording: Arc<AtomicBool>,
 
-    /// 세션의 모든 발화 기록
+    /// 세션의 모든 발화 기록 (피드백 포함) - STOP & SAVE 이후에만 채워짐
     pub utterances: Arc<Mutex<Vec<session::Utterance>>>,
+
+    /// 녹음 중 실시간으로 누적되는 원문 전사(전문) - LLM 호출 없이 타임스탬프+텍스트만 저장
+    pub raw_utterances: Arc<Mutex<Vec<session::RawUtterance>>>,
 
     /// 세션 시작 시각
     pub session_start: Arc<Mutex<Option<chrono::DateTime<chrono::Local>>>>,
@@ -44,20 +47,12 @@ impl Default for AppState {
         Self {
             is_recording: Arc::new(AtomicBool::new(false)),
             utterances: Arc::new(Mutex::new(Vec::new())),
+            raw_utterances: Arc::new(Mutex::new(Vec::new())),
             session_start: Arc::new(Mutex::new(None)),
             stop_tx: Arc::new(Mutex::new(None)),
             processing_handle: Arc::new(Mutex::new(None)),
         }
     }
-}
-
-// ─── 프론트엔드로 emit되는 이벤트 타입 ───────────────────────────────────────
-
-/// 실시간 피드백 이벤트 - `feedback` 이벤트명으로 프론트에 전송
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct FeedbackEvent {
-    pub feedback: feedback::FeedbackResult,
-    pub timestamp: String,
 }
 
 /// 사전 준비 상태 확인 결과
@@ -90,13 +85,10 @@ pub fn check_setup() -> SetupStatus {
 /// 영어 수업 세션 시작
 ///
 /// 1. 마이크 오디오 캡처 스레드 시작
-/// 2. 오디오 처리(Whisper + Ollama) 비동기 태스크 시작
-/// 3. 피드백을 프론트엔드로 실시간 emit
+/// 2. 오디오 처리(Whisper) 비동기 태스크 시작 - 녹음 중에는 전사만 하고 LLM은 호출하지 않음
+///    (실시간 피드백은 MVP에서 제외 - 세션 전체 문맥으로 STOP & SAVE 시점에 일괄 생성)
 #[tauri::command]
-pub async fn start_session(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
+pub async fn start_session(state: State<'_, AppState>) -> Result<(), String> {
     // 이미 녹음 중이면 에러
     if state.is_recording.load(Ordering::SeqCst) {
         return Err("이미 세션이 진행 중입니다".to_string());
@@ -109,6 +101,7 @@ pub async fn start_session(
 
     // 이전 세션 데이터 초기화
     state.utterances.lock().unwrap().clear();
+    state.raw_utterances.lock().unwrap().clear();
     *state.session_start.lock().unwrap() = Some(chrono::Local::now());
     state.is_recording.store(true, Ordering::SeqCst);
 
@@ -174,7 +167,8 @@ pub async fn start_session(
 
     // ── 처리 태스크 (async) ───────────────────────────────────────────────────
     // tauri::async_runtime::spawn: Tauri의 tokio 런타임에서 비동기 실행
-    let utterances = Arc::clone(&state.utterances);
+    // 녹음 중에는 Whisper 전사만 수행 - LLM 호출 없이 원문만 누적
+    let raw_utterances = Arc::clone(&state.raw_utterances);
 
     let handle = tauri::async_runtime::spawn(async move {
         println!("[Processing] 오디오 처리 시작");
@@ -209,31 +203,14 @@ pub async fn start_session(
 
                     println!("[Transcribe] 텍스트: \"{text}\"");
 
-                    // LLM 피드백
-                    let fb = match feedback::get_feedback(&text).await {
-                        Ok(f) => f,
-                        Err(e) => {
-                            eprintln!("[Feedback] 실패: {e}");
-                            continue;
-                        }
-                    };
-
                     let timestamp =
                         chrono::Local::now().format("%H:%M:%S").to_string();
 
-                    // 세션 기록에 추가
-                    utterances.lock().unwrap().push(session::Utterance {
-                        timestamp: timestamp.clone(),
-                        feedback: fb.clone(),
-                    });
-
-                    // 프론트엔드로 실시간 이벤트 emit
-                    if let Err(e) = app.emit("feedback", FeedbackEvent {
-                        feedback: fb,
+                    // 전문(raw transcript)에 추가 - 피드백은 STOP & SAVE 시점에 일괄 생성
+                    raw_utterances.lock().unwrap().push(session::RawUtterance {
                         timestamp,
-                    }) {
-                        eprintln!("[Event] emit 실패: {e}");
-                    }
+                        text,
+                    });
                 }
                 Err(mpsc::TryRecvError::Empty) => {
                     // 데이터 없음 - 100ms 대기
@@ -254,7 +231,11 @@ pub async fn start_session(
     Ok(())
 }
 
-/// 세션 종료 - 오디오 중단 + 리포트 저장
+/// 세션 종료 - 오디오 중단 + 전문 기반 리포트 일괄 생성 + 저장
+///
+/// 녹음 중에는 LLM을 호출하지 않았으므로, 여기서 누적된 전문(raw_utterances)을
+/// 하나씩 돌며 피드백을 생성한다. 발화 수 × LLM 왕복 시간만큼 걸릴 수 있어
+/// 프론트는 이 커맨드의 await가 끝날 때까지를 "리포트 생성 중"으로 표시하면 된다.
 ///
 /// # 반환값
 /// 저장된 마크다운 파일 경로
@@ -266,36 +247,71 @@ pub async fn stop_session(state: State<'_, AppState>) -> Result<String, String> 
     // → 캡처 스레드가 stream을 drop → audio_tx도 함께 drop → audio_rx가 결국 Disconnected
     *state.stop_tx.lock().unwrap() = None;
 
-    // 처리 태스크가 남은 오디오(전사/피드백 대기 중인 발화)를 모두 소진할 때까지 대기.
-    // 이게 없으면 방금 말한 마지막 발화가 리포트에서 누락될 수 있음.
-    // 최대 30초 타임아웃 - Whisper/Ollama가 멈춰도 앱이 무한 대기하지 않도록 방어
+    // 처리 태스크가 남은 오디오(아직 전사 대기 중인 마지막 발화들)를 모두 소진할 때까지 대기.
+    // 최대 30초 타임아웃 - Whisper가 멈춰도 앱이 무한 대기하지 않도록 방어
     let handle = state.processing_handle.lock().unwrap().take();
     if let Some(handle) = handle {
         if tokio::time::timeout(std::time::Duration::from_secs(30), handle)
             .await
             .is_err()
         {
-            eprintln!("[Session] 처리 태스크 대기 시간 초과 - 지금까지의 발화만 저장");
+            eprintln!("[Session] 처리 태스크 대기 시간 초과 - 지금까지의 전문만 저장");
         }
     }
 
-    let utterances = state.utterances.lock().unwrap().clone();
+    let raw_utterances = state.raw_utterances.lock().unwrap().clone();
     let session_start = state.session_start.lock().unwrap().clone();
 
-    match session_start {
-        Some(start) => {
-            let path = session::save_report(&utterances, &start)
-                .map_err(|e| e.to_string())?;
-            Ok(path.to_string_lossy().to_string())
-        }
-        None => Ok(String::new()),
+    let Some(start) = session_start else {
+        return Ok(String::new());
+    };
+
+    // 전문(.txt)은 피드백 생성 여부와 무관하게 먼저 저장 - 실패해도 원문은 남도록
+    if let Err(e) = session::save_transcript(&raw_utterances, &start) {
+        eprintln!("[Session] 전문 저장 실패: {e}");
     }
+
+    // 전문 전체를 바탕으로 발화별 피드백을 일괄 생성 (LLM 호출은 여기서 한 번씩만 발생)
+    let mut utterances = Vec::with_capacity(raw_utterances.len());
+    for raw in &raw_utterances {
+        match feedback::get_feedback(&raw.text).await {
+            Ok(fb) => utterances.push(session::Utterance {
+                timestamp: raw.timestamp.clone(),
+                feedback: fb,
+            }),
+            Err(e) => {
+                eprintln!("[Feedback] \"{}\" 처리 실패: {e}", raw.text);
+                // 실패한 발화는 교정 없이("has_error: false") 원문 그대로 리포트에 포함
+                utterances.push(session::Utterance {
+                    timestamp: raw.timestamp.clone(),
+                    feedback: feedback::FeedbackResult {
+                        original: raw.text.clone(),
+                        corrected: None,
+                        better_expression: None,
+                        idiom_or_vocab: None,
+                        has_error: false,
+                    },
+                });
+            }
+        }
+    }
+
+    *state.utterances.lock().unwrap() = utterances.clone();
+
+    let path = session::save_report(&utterances, &start).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().to_string())
 }
 
-/// 현재 세션의 모든 발화 기록 반환
+/// 현재 세션의 모든 발화 기록 반환 (STOP & SAVE 이후에만 값이 채워짐)
 #[tauri::command]
 pub fn get_utterances(state: State<'_, AppState>) -> Vec<session::Utterance> {
     state.utterances.lock().unwrap().clone()
+}
+
+/// 녹음 중 실시간으로 누적되는 원문 전사(전문) 반환 - "전문 보기" 버튼용
+#[tauri::command]
+pub fn get_transcript(state: State<'_, AppState>) -> Vec<session::RawUtterance> {
+    state.raw_utterances.lock().unwrap().clone()
 }
 
 /// 현재 녹음 상태 반환
@@ -308,6 +324,19 @@ pub fn get_recording_status(state: State<'_, AppState>) -> bool {
 #[tauri::command]
 pub fn list_sessions() -> Result<Vec<session::SessionInfo>, String> {
     session::list_sessions().map_err(|e| e.to_string())
+}
+
+/// 전체 세션 합산 통계 (idle 화면 대시보드용)
+#[tauri::command]
+pub fn get_stats() -> Result<session::Stats, String> {
+    session::get_stats().map_err(|e| e.to_string())
+}
+
+/// 주어진 .md 경로로 SessionInfo를 직접 구성 (STOP & SAVE 직후 방금 만든 세션을
+/// "선택된 세션"으로 바로 지정하기 위해 사용 - list_sessions 순회 없이 즉시 반환)
+#[tauri::command]
+pub fn get_session_info(path: String) -> session::SessionInfo {
+    session::get_session_info(&path)
 }
 
 /// 특정 세션 마크다운 내용 읽기
@@ -323,6 +352,21 @@ pub fn read_session(path: String) -> Result<String, String> {
 #[tauri::command]
 pub fn read_session_utterances(path: String) -> Result<Vec<session::Utterance>, String> {
     session::read_utterances(&path).map_err(|e| e.to_string())
+}
+
+/// 이 세션에 구조화된 발화 기록(JSON 사이드카)이 있는지 여부
+/// 프론트에서 "발화 0건인 최신 세션"과 "JSON이 없는 옛날 세션"을 구분해
+/// 마크다운 폴백 여부를 결정하는 데 사용
+#[tauri::command]
+pub fn session_has_utterances_json(path: String) -> bool {
+    session::has_utterances_json(&path)
+}
+
+/// 특정 세션의 전문(.txt) 읽기 - "전문 보기" 버튼용
+/// .txt가 없는 세션(과거 세션)이면 빈 문자열 반환
+#[tauri::command]
+pub fn read_session_transcript(path: String) -> Result<String, String> {
+    session::read_transcript(&path).map_err(|e| e.to_string())
 }
 
 /// 세션 이름(제목) 변경

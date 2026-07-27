@@ -25,7 +25,15 @@ export function SessionReport({
     );
   }
 
-  if (utterances.length === 0) return null;
+  if (utterances.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-2 select-none">
+        <p className="text-xs text-zinc-400 dark:text-zinc-600 text-center leading-relaxed">
+          No speech was captured in this session.
+        </p>
+      </div>
+    );
+  }
 
   const errorCount = utterances.filter((u) => u.feedback.has_error).length;
   const vocabItems = [
@@ -63,12 +71,12 @@ export function SessionReport({
           ].map(({ label, value, color }) => (
             <div
               key={label}
-              className="min-w-0 border border-zinc-100 dark:border-zinc-800 rounded-lg p-3"
+              className="min-w-0 border border-zinc-100 dark:border-zinc-800 rounded-lg p-2.5"
             >
               <div className={`text-xl font-semibold tabular-nums ${color}`}>
                 {value}
               </div>
-              <div className="text-xs text-zinc-400 dark:text-zinc-500 mt-0.5 truncate">
+              <div className="text-[11px] leading-tight text-zinc-400 dark:text-zinc-500 mt-0.5">
                 {label}
               </div>
             </div>

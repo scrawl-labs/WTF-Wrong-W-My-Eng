@@ -20,6 +20,14 @@ pub struct Utterance {
     pub feedback: FeedbackResult,
 }
 
+/// 녹음 중 실시간 LLM 호출 없이 누적되는 원문 발화 (타임스탬프 + 전사 텍스트만)
+/// STOP & SAVE 시점에 이 목록 전체를 기반으로 피드백을 일괄 생성함
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct RawUtterance {
+    pub timestamp: String,
+    pub text: String,
+}
+
 /// 세션 리포트 저장 디렉터리
 /// ~/.wtf-english/sessions/
 pub fn get_sessions_dir() -> PathBuf {
@@ -53,6 +61,13 @@ pub fn save_report(utterances: &[Utterance], start_time: &DateTime<Local>) -> Re
     Ok(path)
 }
 
+/// 이 세션에 구조화된 발화 기록(JSON 사이드카)이 있는지 여부
+/// JSON이 없는 옛날 세션과, JSON은 있지만 발화가 0건인 최신 세션을 구분하기 위해 사용
+/// (둘 다 read_utterances가 빈 벡터를 반환하므로 벡터 길이만으로는 구분 불가)
+pub fn has_utterances_json(md_path: &str) -> bool {
+    PathBuf::from(md_path).with_extension("json").exists()
+}
+
 /// 마크다운 파일 경로로부터 같은 세션의 JSON(구조화된 발화 기록)을 읽음
 /// 이 JSON이 없으면(이전 버전에서 저장된 세션) 빈 벡터 반환
 pub fn read_utterances(md_path: &str) -> Result<Vec<Utterance>> {
@@ -62,6 +77,34 @@ pub fn read_utterances(md_path: &str) -> Result<Vec<Utterance>> {
     }
     let content = std::fs::read_to_string(json_path)?;
     Ok(serde_json::from_str(&content)?)
+}
+
+/// 원문 전사 전체(전문)를 .txt 사이드카로 저장
+/// base_name은 save_report와 동일한 규칙(start_time 기준)으로 계산해 파일명을 맞춤
+pub fn save_transcript(raw: &[RawUtterance], start_time: &DateTime<Local>) -> Result<PathBuf> {
+    let dir = get_sessions_dir();
+    std::fs::create_dir_all(&dir)?;
+
+    let base_name = start_time.format("%Y-%m-%d_%H-%M-%S").to_string();
+    let path = dir.join(format!("{base_name}.txt"));
+
+    let mut content = String::new();
+    for u in raw {
+        content.push_str(&format!("[{}] {}\n", u.timestamp, u.text));
+    }
+    std::fs::write(&path, content)?;
+
+    Ok(path)
+}
+
+/// 마크다운 파일 경로로부터 같은 세션의 전문(.txt)을 읽음
+/// 없으면(과거 세션 또는 발화가 없던 세션) 빈 문자열 반환
+pub fn read_transcript(md_path: &str) -> Result<String> {
+    let txt_path = PathBuf::from(md_path).with_extension("txt");
+    if !txt_path.exists() {
+        return Ok(String::new());
+    }
+    Ok(std::fs::read_to_string(txt_path)?)
 }
 
 /// 마크다운 리포트 생성
@@ -134,6 +177,34 @@ fn build_markdown(utterances: &[Utterance], start_time: &DateTime<Local>) -> Str
     md
 }
 
+/// 모든 세션을 합산한 전체 통계 - idle 화면 대시보드용
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Stats {
+    pub total_sessions: usize,
+    pub total_utterances: usize,
+    pub total_corrections: usize,
+}
+
+/// 저장된 모든 세션의 JSON 사이드카를 순회해 통계를 합산
+/// 세션 수가 많지 않은 개인용 앱 특성상 매번 전체를 읽어도 충분히 빠름
+pub fn get_stats() -> Result<Stats> {
+    let sessions = list_sessions()?;
+    let mut total_utterances = 0;
+    let mut total_corrections = 0;
+
+    for s in &sessions {
+        let utterances = read_utterances(&s.path)?;
+        total_utterances += utterances.len();
+        total_corrections += utterances.iter().filter(|u| u.feedback.has_error).count();
+    }
+
+    Ok(Stats {
+        total_sessions: sessions.len(),
+        total_utterances,
+        total_corrections,
+    })
+}
+
 /// 저장된 모든 세션 목록 반환
 /// 최신순으로 정렬
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -173,8 +244,27 @@ pub fn list_sessions() -> Result<Vec<SessionInfo>> {
 
     // 최신순 정렬 (역순)
     sessions.sort_by(|a, b| b.filename.cmp(&a.filename));
-    
+
     Ok(sessions)
+}
+
+/// 주어진 .md 경로 하나로 SessionInfo를 직접 구성
+/// STOP & SAVE 직후 방금 만든 세션을 목록에서 "찾는" 대신 바로 만들어 쓰기 위함
+/// (list_sessions 전체를 순회해 경로 문자열을 비교하는 것보다 더 직접적이고 안전함)
+pub fn get_session_info(md_path: &str) -> SessionInfo {
+    let path = PathBuf::from(md_path);
+    let filename = path
+        .file_name()
+        .map(|f| f.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let title =
+        read_custom_title(&path).unwrap_or_else(|| format_session_title(&filename));
+
+    SessionInfo {
+        filename,
+        title,
+        path: md_path.to_string(),
+    }
 }
 
 /// <base>.title 사이드카 파일에서 사용자 지정 제목을 읽음 (없으면 None)
@@ -204,6 +294,7 @@ pub fn delete_session(md_path: &str) -> Result<()> {
     let path = PathBuf::from(md_path);
     let _ = std::fs::remove_file(path.with_extension("json"));
     let _ = std::fs::remove_file(path.with_extension("title"));
+    let _ = std::fs::remove_file(path.with_extension("txt"));
     std::fs::remove_file(&path)?;
     Ok(())
 }

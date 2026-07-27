@@ -6,6 +6,7 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   PencilIcon,
+  PlusIcon,
   TrashIcon,
   CheckIcon,
   XMarkIcon,
@@ -23,6 +24,8 @@ interface SessionListProps {
   onSelectSession: (session: SessionInfo) => void;
   onRenameSession: (session: SessionInfo, newTitle: string) => void;
   onDeleteSession: (session: SessionInfo) => void;
+  onNewSession: () => void;
+  newSessionDisabled?: boolean;
   refreshKey?: number;
 }
 
@@ -31,6 +34,8 @@ export function SessionList({
   onSelectSession,
   onRenameSession,
   onDeleteSession,
+  onNewSession,
+  newSessionDisabled,
   refreshKey,
 }: SessionListProps) {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
@@ -105,6 +110,21 @@ export function SessionList({
           ) : (
             <ChevronLeftIcon className="w-3.5 h-3.5" />
           )}
+        </button>
+      </div>
+
+      {/* 새 세션 버튼 - 녹음 시작은 오직 여기서만 트리거됨 */}
+      <div className={`pt-3 shrink-0 ${collapsed ? "px-1.5" : "px-2"}`}>
+        <button
+          onClick={onNewSession}
+          disabled={newSessionDisabled}
+          title="New Session"
+          className={`flex items-center gap-2 w-full rounded-md text-xs font-medium bg-zinc-900/5 dark:bg-white/10 text-zinc-900 dark:text-white hover:bg-zinc-900/10 dark:hover:bg-white/15 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer ${
+            collapsed ? "justify-center p-2" : "px-2.5 py-2"
+          }`}
+        >
+          <PlusIcon className="w-3.5 h-3.5 shrink-0" />
+          {!collapsed && "New Session"}
         </button>
       </div>
 

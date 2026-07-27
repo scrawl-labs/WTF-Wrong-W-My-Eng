@@ -1,9 +1,8 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import { FeedbackEvent, SetupStatus, Utterance } from "./types";
+import { RawUtterance, SetupStatus, Stats, Utterance } from "./types";
 import { RecordingStatus } from "./components/RecordingStatus";
-import { FeedbackSidebar } from "./components/FeedbackSidebar";
+import { TranscriptView } from "./components/TranscriptView";
 import { SessionReport } from "./components/SessionReport";
 import { SessionList, SessionInfo } from "./components/SessionList";
 import {
@@ -12,6 +11,8 @@ import {
   StopIcon,
   MicrophoneIcon,
   XMarkIcon,
+  DocumentTextIcon,
+  ArrowPathIcon,
 } from "@heroicons/react/20/solid";
 import "./App.css";
 
@@ -19,12 +20,13 @@ export function App() {
   const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [sessionStartTime, setSessionStartTime] = useState<Date | null>(null);
-  const [latestFeedback, setLatestFeedback] = useState<FeedbackEvent | null>(
-    null,
-  );
+  const [liveTranscript, setLiveTranscript] = useState<RawUtterance[]>([]);
+  const [isGeneratingReport, setIsGeneratingReport] = useState(false);
   const [utterances, setUtterances] = useState<Utterance[]>([]);
   const [reportPath, setReportPath] = useState<string>("");
   const [showReport, setShowReport] = useState(false);
+  const [showTranscript, setShowTranscript] = useState(false);
+  const [loadedTranscript, setLoadedTranscript] = useState<string>("");
   const [errorMsg, setErrorMsg] = useState("");
   const [selectedSession, setSelectedSession] = useState<SessionInfo | null>(
     null,
@@ -32,6 +34,7 @@ export function App() {
   const [selectedSessionMarkdown, setSelectedSessionMarkdown] =
     useState<string>("");
   const [sessionRefreshKey, setSessionRefreshKey] = useState(0);
+  const [stats, setStats] = useState<Stats | null>(null);
   const [isDark, setIsDark] = useState(
     () => window.matchMedia("(prefers-color-scheme: dark)").matches,
   );
@@ -49,14 +52,12 @@ export function App() {
       .catch((err) => setErrorMsg(String(err)));
   }, []);
 
+  // idle 화면 통계 대시보드 - 세션이 새로 생기거나 지워질 때마다(sessionRefreshKey) 재계산
   useEffect(() => {
-    const p = listen<FeedbackEvent>("feedback", (e) =>
-      setLatestFeedback(e.payload),
-    );
-    return () => {
-      p.then((u) => u());
-    };
-  }, []);
+    invoke<Stats>("get_stats")
+      .then(setStats)
+      .catch(() => {});
+  }, [sessionRefreshKey]);
 
   useEffect(() => {
     const id = setInterval(async () => {
@@ -64,7 +65,7 @@ export function App() {
         const recording = await invoke<boolean>("get_recording_status");
         setIsRecording(recording);
         if (recording)
-          setUtterances(await invoke<Utterance[]>("get_utterances"));
+          setLiveTranscript(await invoke<RawUtterance[]>("get_transcript"));
       } catch {}
     }, 2000);
     return () => clearInterval(id);
@@ -75,7 +76,9 @@ export function App() {
     setShowReport(false);
     setSelectedSession(null);
     setSelectedSessionMarkdown("");
-    setLatestFeedback(null);
+    setLiveTranscript([]);
+    setShowTranscript(false);
+    setLoadedTranscript("");
     setUtterances([]);
     setReportPath("");
     try {
@@ -90,16 +93,44 @@ export function App() {
   };
 
   const handleStop = async () => {
+    setIsGeneratingReport(true);
     try {
+      // 녹음 중엔 LLM을 호출하지 않았으므로, 여기서 전문을 바탕으로 리포트를 생성한다.
+      // 발화 수만큼 LLM 왕복이 필요해 몇 초 걸릴 수 있음 - isGeneratingReport로 로딩 표시.
       const path = await invoke<string>("stop_session");
       setIsRecording(false);
       setReportPath(path);
       setShowReport(true);
+      setShowTranscript(false);
       setUtterances(await invoke<Utterance[]>("get_utterances"));
       setSessionRefreshKey((k) => k + 1);
+
+      // 방금 끝난 세션을 "선택된 세션"으로 지정 - 헤더/사이드바가 "Ready"로
+      // 되돌아가지 않고 방금 만든 세션을 가리키도록 함
+      if (path) {
+        setSelectedSession(await invoke<SessionInfo>("get_session_info", { path }));
+      }
     } catch (err) {
       setErrorMsg(String(err));
+    } finally {
+      setIsGeneratingReport(false);
     }
+  };
+
+  const handleToggleTranscript = async () => {
+    if (!showTranscript && !isRecording) {
+      const path = selectedSession?.path || reportPath;
+      if (path) {
+        try {
+          setLoadedTranscript(
+            await invoke<string>("read_session_transcript", { path }),
+          );
+        } catch (err) {
+          setErrorMsg(String(err));
+        }
+      }
+    }
+    setShowTranscript((v) => !v);
   };
 
   const handleSelectSession = async (session: SessionInfo) => {
@@ -107,15 +138,22 @@ export function App() {
     setShowReport(false);
     setUtterances([]);
     setSelectedSessionMarkdown("");
+    setShowTranscript(false);
+    setLoadedTranscript("");
     try {
-      // 구조화된 발화 기록(JSON)을 먼저 시도 - 라이브 리포트와 동일한 카드/표 UI로 보여줌
-      const sessionUtterances = await invoke<Utterance[]>(
-        "read_session_utterances",
-        { path: session.path },
-      );
+      // JSON 사이드카 존재 여부로 분기 - 발화 0건인 최신 세션과
+      // JSON 자체가 없는 옛날 세션을 구분해야 함 (둘 다 배열 길이만으로는 구분 불가)
+      const hasJson = await invoke<boolean>("session_has_utterances_json", {
+        path: session.path,
+      });
 
-      if (sessionUtterances.length > 0) {
-        setUtterances(sessionUtterances);
+      if (hasJson) {
+        // 구조화된 발화 기록(JSON) - 라이브 리포트와 동일한 카드/표 UI로 보여줌
+        setUtterances(
+          await invoke<Utterance[]>("read_session_utterances", {
+            path: session.path,
+          }),
+        );
       } else {
         // JSON 사이드카가 없는 옛날 세션 → 마크다운 원본으로 폴백
         const content = await invoke<string>("read_session", {
@@ -161,11 +199,17 @@ export function App() {
   };
 
   const isModelReady = setupStatus?.model_ready ?? false;
-  const rightPanelTitle = isRecording
-    ? "Live Feedback"
-    : showReport
-      ? (selectedSession?.title ?? "Report")
-      : "Details";
+  const canViewTranscript = isRecording || showReport;
+  const newSessionDisabled = isRecording || isGeneratingReport || !isModelReady;
+  const rightPanelTitle = showTranscript
+    ? "Transcript"
+    : isGeneratingReport
+      ? "Report"
+      : isRecording
+        ? "Recording"
+        : showReport
+          ? (selectedSession?.title ?? "Report")
+          : "Details";
 
   return (
     <div className="flex h-screen overflow-hidden bg-white dark:bg-zinc-900 font-sans antialiased">
@@ -175,6 +219,8 @@ export function App() {
         onSelectSession={handleSelectSession}
         onRenameSession={handleRenameSession}
         onDeleteSession={handleDeleteSession}
+        onNewSession={handleStart}
+        newSessionDisabled={newSessionDisabled}
         refreshKey={sessionRefreshKey}
       />
 
@@ -188,12 +234,14 @@ export function App() {
                 ? "Session in progress"
                 : selectedSession
                   ? selectedSession.title
-                  : "Ready"}
+                  : showReport
+                    ? "Report"
+                    : "Ready"}
             </h1>
             <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-0.5">
               {isRecording
-                ? "Speak naturally — feedback appears on the right"
-                : "Select a session or start recording"}
+                ? "Speak naturally — your report is generated when you stop"
+                : "Select a session, or click New Session to start recording"}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -242,60 +290,131 @@ export function App() {
               </div>
             )}
 
-            {/* 메인 카드 */}
-            <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl">
-              <div className="px-6 py-5 border-b border-zinc-100 dark:border-zinc-800">
-                <h2 className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
-                  Recording
-                </h2>
-                <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-0.5">
-                  Start a new session to receive real-time feedback on your
-                  English
-                </p>
-              </div>
-              <div className="px-6 py-6">
-                {/* 상태 표시줄 */}
-                <div className="flex items-center gap-3 mb-6 pb-5 border-b border-zinc-100 dark:border-zinc-800">
-                  <div
-                    className={`w-2.5 h-2.5 rounded-full shrink-0 ${
-                      isRecording
-                        ? "bg-red-500 animate-pulse"
-                        : "bg-zinc-200 dark:bg-zinc-700"
-                    }`}
-                  />
-                  <span className="text-sm text-zinc-600 dark:text-zinc-400">
-                    {isRecording ? "Recording in progress" : "Not recording"}
-                  </span>
+            {/* 녹음 중/생성 중에만 상태 카드 표시 - Start 버튼은 사이드바의 New Session으로 이동 */}
+            {isRecording || isGeneratingReport ? (
+              <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl">
+                <div className="px-6 py-5 border-b border-zinc-100 dark:border-zinc-800">
+                  <h2 className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                    Recording
+                  </h2>
+                  <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-0.5">
+                    Your full report is generated when you stop
+                  </p>
                 </div>
+                <div className="px-6 py-6">
+                  {/* 상태 표시줄 */}
+                  <div className="flex items-center gap-3 mb-6 pb-5 border-b border-zinc-100 dark:border-zinc-800">
+                    <div
+                      className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                        isRecording
+                          ? "bg-red-500 animate-pulse"
+                          : "bg-zinc-200 dark:bg-zinc-700"
+                      }`}
+                    />
+                    <span className="text-sm text-zinc-600 dark:text-zinc-400">
+                      {isGeneratingReport
+                        ? "Generating report..."
+                        : "Recording in progress"}
+                    </span>
+                  </div>
 
-                {/* 버튼 */}
-                <div className="flex gap-3">
-                  <button
-                    onClick={handleStart}
-                    disabled={isRecording || !isModelReady}
-                    className="flex items-center gap-2 px-4 py-2 bg-zinc-900 dark:bg-white hover:bg-zinc-700 dark:hover:bg-zinc-100 disabled:bg-zinc-100 dark:disabled:bg-zinc-800 disabled:text-zinc-400 dark:disabled:text-zinc-600 text-white dark:text-zinc-900 text-sm font-medium rounded-lg transition-colors cursor-pointer disabled:cursor-not-allowed"
-                  >
-                    <MicrophoneIcon className="w-4 h-4" />
-                    Start Session
-                  </button>
                   <button
                     onClick={handleStop}
-                    disabled={!isRecording}
+                    disabled={!isRecording || isGeneratingReport}
                     className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-700 disabled:opacity-40 border border-zinc-200 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300 text-sm font-medium rounded-lg transition-colors cursor-pointer disabled:cursor-not-allowed"
                   >
-                    <StopIcon className="w-4 h-4" />
-                    Stop & Save
+                    {isGeneratingReport ? (
+                      <ArrowPathIcon className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <StopIcon className="w-4 h-4" />
+                    )}
+                    {isGeneratingReport ? "Generating..." : "Stop & Save"}
                   </button>
                 </div>
               </div>
-            </div>
+            ) : !showReport ? (
+              <div className="flex flex-col items-center justify-center flex-1 gap-10 py-16 select-none">
+                <div className="flex flex-col items-center gap-3">
+                  <MicrophoneIcon className="w-8 h-8 text-zinc-300 dark:text-zinc-700" />
+                  <p className="text-sm text-zinc-400 dark:text-zinc-600 text-center leading-relaxed">
+                    Click{" "}
+                    <span className="font-medium text-zinc-500 dark:text-zinc-400">
+                      New Session
+                    </span>{" "}
+                    in the sidebar to start recording.
+                  </p>
+                </div>
+
+                {stats && stats.total_sessions > 0 ? (
+                  <div className="grid grid-cols-3 gap-3 w-full max-w-sm">
+                    {[
+                      {
+                        label: "Sessions",
+                        value: stats.total_sessions,
+                        color: "text-zinc-800 dark:text-zinc-100",
+                      },
+                      {
+                        label: "Utterances",
+                        value: stats.total_utterances,
+                        color: "text-zinc-800 dark:text-zinc-100",
+                      },
+                      {
+                        label: "Corrections",
+                        value: stats.total_corrections,
+                        color: "text-red-600 dark:text-red-400",
+                      },
+                    ].map(({ label, value, color }) => (
+                      <div
+                        key={label}
+                        className="min-w-0 border border-zinc-100 dark:border-zinc-800 rounded-lg p-3 text-center"
+                      >
+                        <div
+                          className={`text-xl font-semibold tabular-nums ${color}`}
+                        >
+                          {value}
+                        </div>
+                        <div className="text-[11px] leading-tight text-zinc-400 dark:text-zinc-500 mt-0.5">
+                          {label}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-3 gap-3 w-full max-w-sm">
+                    {["Sessions", "Utterances", "Corrections"].map(
+                      (label) => (
+                        <div
+                          key={label}
+                          className="min-w-0 border border-dashed border-zinc-200 dark:border-zinc-800 rounded-lg p-3 text-center"
+                        >
+                          <div className="text-xl font-semibold tabular-nums text-zinc-300 dark:text-zinc-700">
+                            —
+                          </div>
+                          <div className="text-[11px] leading-tight text-zinc-300 dark:text-zinc-700 mt-0.5">
+                            {label}
+                          </div>
+                        </div>
+                      ),
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : null}
 
             {/* 최근 세션 utterances 테이블 — 리포트 직후 또는 과거 세션 선택 시 표시 */}
+            {showReport && utterances.length === 0 && !selectedSessionMarkdown && (
+              <div className="mt-5 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-12 flex flex-col items-center justify-center gap-2 text-center">
+                <DocumentTextIcon className="w-6 h-6 text-zinc-300 dark:text-zinc-700" />
+                <p className="text-xs text-zinc-400 dark:text-zinc-600">
+                  No speech was captured in this session.
+                </p>
+              </div>
+            )}
             {showReport && utterances.length > 0 && (
               <div className="mt-5 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl overflow-hidden">
                 <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800">
                   <h2 className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
-                    Transcript
+                    Corrections
                   </h2>
                 </div>
                 <table className="w-full text-xs">
@@ -327,7 +446,7 @@ export function App() {
                         <td className="px-6 py-3">
                           {u.feedback.has_error ? (
                             <span className="inline-flex px-2 py-0.5 rounded text-xs font-medium bg-red-50 dark:bg-red-950 text-red-600 dark:text-red-400">
-                              Error
+                              Needs correction
                             </span>
                           ) : (
                             <span className="inline-flex px-2 py-0.5 rounded text-xs font-medium bg-emerald-50 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400">
@@ -344,18 +463,53 @@ export function App() {
           </main>
 
           {/* 오른쪽 패널 */}
-          <aside className="w-72 shrink-0 border-l border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 flex flex-col overflow-hidden">
-            <div className="px-5 py-3.5 border-b border-zinc-100 dark:border-zinc-800 shrink-0">
+          <aside className="w-80 shrink-0 border-l border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-3.5 border-b border-zinc-100 dark:border-zinc-800 shrink-0">
               <h3 className="text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
                 {rightPanelTitle}
               </h3>
+              {canViewTranscript && (
+                <button
+                  onClick={handleToggleTranscript}
+                  className="flex items-center gap-1 text-xs font-medium text-zinc-400 dark:text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors cursor-pointer"
+                >
+                  <DocumentTextIcon className="w-3.5 h-3.5" />
+                  {showTranscript
+                    ? isRecording
+                      ? "Hide"
+                      : "Report"
+                    : "Transcript"}
+                </button>
+              )}
             </div>
             <div className="flex-1 overflow-y-auto p-5">
-              {isRecording ? (
-                <FeedbackSidebar
-                  latestFeedback={latestFeedback}
-                  isVisible={true}
+              {showTranscript ? (
+                <TranscriptView
+                  text={
+                    isRecording
+                      ? liveTranscript
+                          .map((u) => `[${u.timestamp}] ${u.text}`)
+                          .join("\n")
+                      : loadedTranscript
+                  }
                 />
+              ) : isGeneratingReport ? (
+                <div className="flex flex-col items-center justify-center h-full gap-3 select-none">
+                  <ArrowPathIcon className="w-5 h-5 text-zinc-400 dark:text-zinc-600 animate-spin" />
+                  <p className="text-xs text-zinc-400 dark:text-zinc-500 text-center leading-relaxed">
+                    Generating report from your transcript...
+                  </p>
+                </div>
+              ) : isRecording ? (
+                <div className="flex flex-col items-center justify-center h-full gap-3 select-none">
+                  <MicrophoneIcon className="w-7 h-7 text-zinc-300 dark:text-zinc-600" />
+                  <p className="text-xs text-zinc-400 dark:text-zinc-500 text-center leading-relaxed">
+                    Recording — {liveTranscript.length} utterance
+                    {liveTranscript.length === 1 ? "" : "s"} captured.
+                    <br />
+                    Feedback is generated when you stop.
+                  </p>
+                </div>
               ) : showReport ? (
                 <SessionReport
                   utterances={utterances}
