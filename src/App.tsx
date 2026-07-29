@@ -95,16 +95,15 @@ export function App() {
     setReportPath("");
     try {
       // cpal의 저수준 CoreAudio 호출만으로는 macOS 마이크 권한(TCC) 대화상자가
-      // 아예 안 뜨는 경우가 있어, AVFoundation 기반 API로 명시적으로 요청/확인한다.
+      // 아예 안 뜨는 경우가 있어, AVFoundation 기반 API로 명시적으로 요청한다.
       // 그렇지 않으면 시스템 설정에 앱 자체가 나타나지 않고 조용히 마이크가 막힘.
+      //
+      // 이 체크 결과로 세션 시작 자체를 막지는 않는다 - `tauri dev`로 띄운
+      // 번들 안 된 실행파일은 자체 Info.plist/번들 아이덴티티가 없어 이 체크가
+      // 항상 false를 줄 수 있음. 실제 마이크 캡처 성공 여부는 백엔드(cpal)가
+      // 판단해서 실패 시 별도 에러로 알려준다 (audio.rs 참고).
       if (!(await checkMicrophonePermission())) {
         await requestMicrophonePermission();
-        if (!(await checkMicrophonePermission())) {
-          setErrorMsg(
-            "마이크 권한이 필요합니다. 시스템 설정 > 개인정보 보호 및 보안 > 마이크에서 Scoldler를 허용해주세요.",
-          );
-          return;
-        }
       }
 
       setSessionStartTime(new Date());
