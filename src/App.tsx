@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import {
+  checkMicrophonePermission,
+  requestMicrophonePermission,
+} from "tauri-plugin-macos-permissions-api";
 import { RawUtterance, SetupProgress, Stats, Utterance } from "./types";
 import { RecordingStatus } from "./components/RecordingStatus";
 import { TranscriptView } from "./components/TranscriptView";
@@ -90,6 +94,19 @@ export function App() {
     setUtterances([]);
     setReportPath("");
     try {
+      // cpal의 저수준 CoreAudio 호출만으로는 macOS 마이크 권한(TCC) 대화상자가
+      // 아예 안 뜨는 경우가 있어, AVFoundation 기반 API로 명시적으로 요청/확인한다.
+      // 그렇지 않으면 시스템 설정에 앱 자체가 나타나지 않고 조용히 마이크가 막힘.
+      if (!(await checkMicrophonePermission())) {
+        await requestMicrophonePermission();
+        if (!(await checkMicrophonePermission())) {
+          setErrorMsg(
+            "마이크 권한이 필요합니다. 시스템 설정 > 개인정보 보호 및 보안 > 마이크에서 Scoldler를 허용해주세요.",
+          );
+          return;
+        }
+      }
+
       setSessionStartTime(new Date());
       await invoke("start_session");
       setIsRecording(true);
