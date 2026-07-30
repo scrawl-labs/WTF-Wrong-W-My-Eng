@@ -1,15 +1,22 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
   checkMicrophonePermission,
   requestMicrophonePermission,
 } from "tauri-plugin-macos-permissions-api";
-import { RawUtterance, SetupProgress, Stats, Utterance } from "./types";
+import {
+  RawUtterance,
+  SessionProgress,
+  SetupProgress,
+  Stats,
+  Utterance,
+} from "./types";
 import { RecordingStatus } from "./components/RecordingStatus";
 import { TranscriptView } from "./components/TranscriptView";
 import { SessionReport } from "./components/SessionReport";
 import { SessionList, SessionInfo } from "./components/SessionList";
+import { UploadModal } from "./components/UploadModal";
 import {
   SunIcon,
   MoonIcon,
@@ -45,6 +52,12 @@ export function App() {
   const [isDark, setIsDark] = useState(
     () => window.matchMedia("(prefers-color-scheme: dark)").matches,
   );
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const [uploadProcessing, setUploadProcessing] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<SessionProgress | null>(
+    null,
+  );
+  const [uploadError, setUploadError] = useState("");
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", isDark);
@@ -81,6 +94,16 @@ export function App() {
       } catch {}
     }, 2000);
     return () => clearInterval(id);
+  }, []);
+
+  // 업로드 세션 처리 진행 상황 (디코딩 → 전사 → 피드백 생성) - 업로드 모달에서만 사용
+  useEffect(() => {
+    const p = listen<SessionProgress>("session-progress", (e) =>
+      setUploadProgress(e.payload),
+    );
+    return () => {
+      p.then((u) => u());
+    };
   }, []);
 
   const handleStart = async () => {
@@ -140,6 +163,39 @@ export function App() {
       setIsGeneratingReport(false);
     }
   };
+
+  // UploadModal의 드래그앤드롭 리스너 useEffect가 이 함수 참조([onUpload])에
+  // 의존하므로, useCallback 없이 매 App 렌더마다 새 함수를 만들면 리스너가
+  // 계속 해제/재구독된다. invoke와 setter들은 안정적이라 deps는 빈 배열로 둔다.
+  const handleUploadFile = useCallback(async (path: string) => {
+    setUploadError("");
+    setUploadProcessing(true);
+    setUploadProgress(null);
+    try {
+      const path_ = await invoke<string>("start_session_from_file", {
+        path,
+      });
+      setUploadProcessing(false);
+      setShowUploadModal(false);
+      setShowReport(false);
+      setSelectedSession(null);
+      setSelectedSessionMarkdown("");
+      setShowTranscript(false);
+      setLoadedTranscript("");
+      setReportPath(path_);
+      setUtterances(await invoke<Utterance[]>("get_utterances"));
+      setShowReport(true);
+      setSessionRefreshKey((k) => k + 1);
+      if (path_) {
+        setSelectedSession(
+          await invoke<SessionInfo>("get_session_info", { path: path_ }),
+        );
+      }
+    } catch (err) {
+      setUploadProcessing(false);
+      setUploadError(String(err));
+    }
+  }, []);
 
   const handleToggleTranscript = async () => {
     if (!showTranscript && !isRecording) {
@@ -267,9 +323,22 @@ export function App() {
         onRenameSession={handleRenameSession}
         onDeleteSession={handleDeleteSession}
         onNewSession={handleStart}
+        onUploadClick={() => setShowUploadModal(true)}
         newSessionDisabled={newSessionDisabled}
         refreshKey={sessionRefreshKey}
       />
+
+      {showUploadModal && (
+        <UploadModal
+          onClose={() => {
+            if (!uploadProcessing) setShowUploadModal(false);
+          }}
+          onUpload={handleUploadFile}
+          processing={uploadProcessing}
+          progress={uploadProgress}
+          error={uploadError}
+        />
+      )}
 
       {/* ── 메인 영역 ──────────────────────── */}
       <div className="flex flex-col flex-1 overflow-hidden">

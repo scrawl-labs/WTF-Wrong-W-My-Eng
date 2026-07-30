@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   ArrowPathIcon,
   DocumentTextIcon,
+  DocumentArrowUpIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   PencilIcon,
@@ -12,11 +13,13 @@ import {
   XMarkIcon,
 } from "@heroicons/react/20/solid";
 import appIcon from "../assets/app-icon.png";
+import { SessionSource } from "../types";
 
 export interface SessionInfo {
   filename: string;
   title: string;
   path: string;
+  source: SessionSource;
 }
 
 interface SessionListProps {
@@ -25,6 +28,7 @@ interface SessionListProps {
   onRenameSession: (session: SessionInfo, newTitle: string) => void;
   onDeleteSession: (session: SessionInfo) => void;
   onNewSession: () => void;
+  onUploadClick: () => void;
   newSessionDisabled?: boolean;
   refreshKey?: number;
 }
@@ -35,6 +39,7 @@ export function SessionList({
   onRenameSession,
   onDeleteSession,
   onNewSession,
+  onUploadClick,
   newSessionDisabled,
   refreshKey,
 }: SessionListProps) {
@@ -113,18 +118,28 @@ export function SessionList({
         </button>
       </div>
 
-      {/* 새 세션 버튼 - 녹음 시작은 오직 여기서만 트리거됨 */}
-      <div className={`pt-3 shrink-0 ${collapsed ? "px-1.5" : "px-2"}`}>
+      {/* 새 세션 버튼 - 녹음 시작 또는 파일 업로드 */}
+      <div className={`pt-3 shrink-0 flex gap-1.5 ${collapsed ? "px-1.5 flex-col" : "px-2"}`}>
         <button
           onClick={onNewSession}
           disabled={newSessionDisabled}
           title="New Session"
-          className={`flex items-center gap-2 w-full rounded-md text-xs font-medium bg-zinc-900/5 dark:bg-white/10 text-zinc-900 dark:text-white hover:bg-zinc-900/10 dark:hover:bg-white/15 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer ${
+          className={`flex items-center gap-2 flex-1 rounded-md text-xs font-medium bg-zinc-900/5 dark:bg-white/10 text-zinc-900 dark:text-white hover:bg-zinc-900/10 dark:hover:bg-white/15 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer ${
             collapsed ? "justify-center p-2" : "px-2.5 py-2"
           }`}
         >
           <PlusIcon className="w-3.5 h-3.5 shrink-0" />
           {!collapsed && "New Session"}
+        </button>
+        <button
+          onClick={onUploadClick}
+          disabled={newSessionDisabled}
+          title="Upload Recording"
+          className={`flex items-center justify-center rounded-md text-xs font-medium bg-zinc-900/5 dark:bg-white/10 text-zinc-900 dark:text-white hover:bg-zinc-900/10 dark:hover:bg-white/15 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer ${
+            collapsed ? "p-2" : "px-2.5 py-2"
+          }`}
+        >
+          <DocumentArrowUpIcon className="w-3.5 h-3.5 shrink-0" />
         </button>
       </div>
 
@@ -199,7 +214,17 @@ export function SessionList({
                         : "text-zinc-500 dark:text-zinc-400 hover:bg-zinc-900/5 dark:hover:bg-white/5 hover:text-zinc-700 dark:hover:text-zinc-200"
                     }`}
                   >
-                    <div className="font-medium truncate">{session.title}</div>
+                    <div className="font-medium truncate flex items-center gap-1.5">
+                      {session.title}
+                      {session.source.kind === "uploaded" && (
+                        <span
+                          title={`Uploaded: ${session.source.original_filename}`}
+                          className="shrink-0 text-[9px] font-semibold uppercase tracking-wide px-1 py-0.5 rounded bg-zinc-200 dark:bg-zinc-700 text-zinc-500 dark:text-zinc-300"
+                        >
+                          File
+                        </span>
+                      )}
+                    </div>
                     <div className="text-zinc-400 dark:text-zinc-600 font-mono truncate mt-0.5 text-[10px]">
                       {session.filename.replace(".md", "")}
                     </div>
