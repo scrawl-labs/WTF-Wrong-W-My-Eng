@@ -48,5 +48,6 @@ anyhow = "1"
 # Home directory path resolution
 dirs = "5"
 futures-util = "0.3.33"
+tauri-plugin-dialog = "2"
 tauri-plugin-macos-permissions = "2.3.0"
 
