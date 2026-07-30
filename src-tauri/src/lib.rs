@@ -20,6 +20,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::run_setup,
             commands::start_session,
+            commands::start_session_from_file,
             commands::stop_session,
             commands::get_utterances,
             commands::get_transcript,

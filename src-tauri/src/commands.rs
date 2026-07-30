@@ -7,12 +7,12 @@
 // - mpsc 채널: 스레드 간 메시지 전달
 // - tauri::State: 앱 전역 상태 주입
 
-use crate::{audio, feedback, session, transcribe};
+use crate::{audio, session, transcribe};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     mpsc, Arc, Mutex,
 };
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 
 // ─── 앱 전역 상태 ────────────────────────────────────────────────────────────
 
@@ -235,7 +235,7 @@ pub async fn start_session(state: State<'_, AppState>) -> Result<(), String> {
 /// # 반환값
 /// 저장된 마크다운 파일 경로
 #[tauri::command]
-pub async fn stop_session(state: State<'_, AppState>) -> Result<String, String> {
+pub async fn stop_session(app: AppHandle, state: State<'_, AppState>) -> Result<String, String> {
     state.is_recording.store(false, Ordering::SeqCst);
 
     // 오디오 스레드에 종료 신호 전송 (stop_tx를 drop하면 recv가 해제됨)
@@ -261,40 +261,105 @@ pub async fn stop_session(state: State<'_, AppState>) -> Result<String, String> 
         return Ok(String::new());
     };
 
-    // 전문(.txt)은 피드백 생성 여부와 무관하게 먼저 저장 - 실패해도 원문은 남도록
-    if let Err(e) = session::save_transcript(&raw_utterances, &start) {
-        eprintln!("[Session] 전문 저장 실패: {e}");
+    let path = session::finalize_session(
+        &app,
+        &raw_utterances,
+        &start,
+        session::SessionSource::Recorded,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    *state.utterances.lock().unwrap() = session::read_utterances(&path).unwrap_or_default();
+
+    Ok(path)
+}
+
+/// 업로드된 오디오 파일로부터 세션 생성 - 마이크 캡처 없이 파일 하나를
+/// 디코딩 → 전사(세그먼트 타임스탬프) → 피드백 생성까지 한 번에 처리한다.
+/// 라이브 세션과 달리 시작/종료 단계가 없고, 이 커맨드 하나가 끝나면
+/// 바로 완성된 리포트 경로를 반환한다.
+#[tauri::command]
+pub async fn start_session_from_file(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<String, String> {
+    if state.is_recording.load(Ordering::SeqCst) {
+        return Err("이미 세션이 진행 중입니다".to_string());
     }
 
-    // 전문 전체를 바탕으로 발화별 피드백을 일괄 생성 (LLM 호출은 여기서 한 번씩만 발생)
-    let mut utterances = Vec::with_capacity(raw_utterances.len());
-    for raw in &raw_utterances {
-        match feedback::get_feedback(&raw.text).await {
-            Ok(fb) => utterances.push(session::Utterance {
-                timestamp: raw.timestamp.clone(),
-                feedback: fb,
-            }),
-            Err(e) => {
-                eprintln!("[Feedback] \"{}\" 처리 실패: {e}", raw.text);
-                // 실패한 발화는 교정 없이("has_error: false") 원문 그대로 리포트에 포함
-                utterances.push(session::Utterance {
-                    timestamp: raw.timestamp.clone(),
-                    feedback: feedback::FeedbackResult {
-                        original: raw.text.clone(),
-                        corrected: None,
-                        better_expression: None,
-                        idiom_or_vocab: None,
-                        has_error: false,
-                    },
-                });
-            }
-        }
+    if !transcribe::is_model_ready() {
+        return Err(transcribe::model_download_instructions());
     }
 
-    *state.utterances.lock().unwrap() = utterances.clone();
+    let file_path = std::path::PathBuf::from(&path);
+    let original_filename = file_path
+        .file_name()
+        .map(|f| f.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.clone());
 
-    let path = session::save_report(&utterances, &start).map_err(|e| e.to_string())?;
-    Ok(path.to_string_lossy().to_string())
+    let app_for_decode = app.clone();
+    let pcm = tauri::async_runtime::spawn_blocking(move || {
+        let _ = app_for_decode.emit(
+            "session-progress",
+            serde_json::json!({ "stage": "decoding_audio", "current": 0, "total": 0 }),
+        );
+        crate::decode::decode_file_to_pcm16k(&file_path)
+    })
+    .await
+    .map_err(|e| format!("디코딩 작업 실패: {e}"))?
+    .map_err(|e| e.to_string())?;
+
+    let app_for_transcribe = app.clone();
+    let segments = tauri::async_runtime::spawn_blocking(move || {
+        crate::transcribe::transcribe_with_segments(&pcm, move |percent| {
+            let _ = app_for_transcribe.emit(
+                "session-progress",
+                serde_json::json!({ "stage": "transcribing", "current": percent, "total": 100 }),
+            );
+        })
+    })
+    .await
+    .map_err(|e| format!("전사 작업 실패: {e}"))?
+    .map_err(|e| e.to_string())?;
+
+    if segments.is_empty() {
+        return Err("인식된 발화가 없습니다".to_string());
+    }
+
+    let raw_utterances: Vec<session::RawUtterance> = segments
+        .into_iter()
+        .map(|seg| session::RawUtterance {
+            timestamp: format_offset_timestamp(seg.start_secs),
+            text: seg.text,
+        })
+        .collect();
+
+    *state.raw_utterances.lock().unwrap() = raw_utterances.clone();
+
+    let start = chrono::Local::now();
+    let report_path = session::finalize_session(
+        &app,
+        &raw_utterances,
+        &start,
+        session::SessionSource::Uploaded { original_filename },
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    *state.utterances.lock().unwrap() =
+        session::read_utterances(&report_path).unwrap_or_default();
+
+    Ok(report_path)
+}
+
+/// 파일 시작 기준 경과 시간(초)을 "mm:ss" 형식으로 포맷
+/// 라이브 세션의 타임스탬프(HH:MM:SS 벽시계 시각)와 의미가 다름 - 업로드 세션은
+/// "몇 분 몇 초 지점의 발화인가"가 사용자에게 더 유용함
+fn format_offset_timestamp(seconds: f32) -> String {
+    let total_secs = seconds.max(0.0) as u64;
+    format!("{:02}:{:02}", total_secs / 60, total_secs % 60)
 }
 
 /// 현재 세션의 모든 발화 기록 반환 (STOP & SAVE 이후에만 값이 채워짐)
