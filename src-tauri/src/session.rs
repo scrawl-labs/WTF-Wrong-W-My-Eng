@@ -396,12 +396,13 @@ pub fn rename_session(md_path: &str, new_title: &str) -> Result<()> {
     Ok(())
 }
 
-/// 세션 삭제 - .md, .json, .title 사이드카를 모두 삭제 (없는 파일은 무시)
+/// 세션 삭제 - .md, .json, .title, .txt, .source 사이드카를 모두 삭제 (없는 파일은 무시)
 pub fn delete_session(md_path: &str) -> Result<()> {
     let path = PathBuf::from(md_path);
     let _ = std::fs::remove_file(path.with_extension("json"));
     let _ = std::fs::remove_file(path.with_extension("title"));
     let _ = std::fs::remove_file(path.with_extension("txt"));
+    let _ = std::fs::remove_file(path.with_extension("source"));
     std::fs::remove_file(&path)?;
     Ok(())
 }

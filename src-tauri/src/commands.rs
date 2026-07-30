@@ -22,6 +22,10 @@ pub struct AppState {
     /// 녹음 중 여부 (원자적 bool - 락 없이 안전)
     pub is_recording: Arc<AtomicBool>,
 
+    /// 파일 업로드 처리 중 여부 (원자적 bool - 락 없이 안전)
+    /// 라이브 녹음(is_recording)과 파일 업로드가 동시에 진행되지 않도록 상호 배제하는 데 사용
+    pub is_processing_upload: Arc<AtomicBool>,
+
     /// 세션의 모든 발화 기록 (피드백 포함) - STOP & SAVE 이후에만 채워짐
     pub utterances: Arc<Mutex<Vec<session::Utterance>>>,
 
@@ -48,6 +52,7 @@ impl Default for AppState {
     fn default() -> Self {
         Self {
             is_recording: Arc::new(AtomicBool::new(false)),
+            is_processing_upload: Arc::new(AtomicBool::new(false)),
             utterances: Arc::new(Mutex::new(Vec::new())),
             raw_utterances: Arc::new(Mutex::new(Vec::new())),
             session_start: Arc::new(Mutex::new(None)),
@@ -55,6 +60,19 @@ impl Default for AppState {
             processing_handle: Arc::new(Mutex::new(None)),
             ollama_process: Arc::new(Mutex::new(None)),
         }
+    }
+}
+
+/// `is_processing_upload` 플래그를 함수 종료 시점(성공/에러 조기 반환 모두)에
+/// 자동으로 false로 되돌리는 RAII 가드. `start_session_from_file`처럼 이른 반환
+/// 지점이 여러 개인 함수에서 플래그 리셋을 매 반환 경로마다 수동으로 적어주지
+/// 않아도 되게 해준다 - Rust의 Drop은 스코프를 벗어나는 모든 경로(return 포함)에서
+/// 호출이 보장된다.
+struct UploadGuard(Arc<AtomicBool>);
+
+impl Drop for UploadGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
     }
 }
 
@@ -87,6 +105,11 @@ pub async fn start_session(state: State<'_, AppState>) -> Result<(), String> {
     // 이미 녹음 중이면 에러
     if state.is_recording.load(Ordering::SeqCst) {
         return Err("이미 세션이 진행 중입니다".to_string());
+    }
+
+    // 파일 업로드 처리 중이면 마이크 세션을 시작하지 않음 (동시 진행 방지)
+    if state.is_processing_upload.load(Ordering::SeqCst) {
+        return Err("파일 처리가 진행 중입니다. 완료 후 다시 시도해주세요.".to_string());
     }
 
     // Whisper 모델 존재 확인
@@ -289,9 +312,20 @@ pub async fn start_session_from_file(
         return Err("이미 세션이 진행 중입니다".to_string());
     }
 
+    // 이미 다른 파일 업로드를 처리 중이면 에러 (동시 업로드 방지)
+    if state.is_processing_upload.load(Ordering::SeqCst) {
+        return Err("이미 파일을 처리하는 중입니다".to_string());
+    }
+
     if !transcribe::is_model_ready() {
         return Err(transcribe::model_download_instructions());
     }
+
+    // 여기부터는 모든 사전 검증(guard)을 통과했으므로 처리 중 플래그를 세운다.
+    // _upload_guard는 이 함수가 어떤 경로로 반환하든(성공/에러 조기 반환 모두) Drop 시점에
+    // 플래그를 자동으로 false로 되돌려, 실패한 업로드가 이후 세션을 영구히 막지 않도록 한다.
+    state.is_processing_upload.store(true, Ordering::SeqCst);
+    let _upload_guard = UploadGuard(Arc::clone(&state.is_processing_upload));
 
     let file_path = std::path::PathBuf::from(&path);
     let original_filename = file_path

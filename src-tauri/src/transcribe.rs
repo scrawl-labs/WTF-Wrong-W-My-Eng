@@ -109,6 +109,9 @@ pub fn transcribe(audio: &[f32]) -> Result<String> {
 pub struct TranscribedSegment {
     pub text: String,
     pub start_secs: f32,
+    // 현재는 어디서도 읽지 않지만, 세그먼트 길이 표시 등 향후 리포트 개선에 필요한
+    // 의미있는 데이터라 유지 - 제거하면 나중에 Whisper 결과에서 다시 뽑아내야 함
+    #[allow(dead_code)]
     pub end_secs: f32,
 }
 

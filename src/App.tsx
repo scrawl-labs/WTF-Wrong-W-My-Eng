@@ -331,7 +331,10 @@ export function App() {
       {showUploadModal && (
         <UploadModal
           onClose={() => {
-            if (!uploadProcessing) setShowUploadModal(false);
+            // 처리 중에도 닫기를 허용한다 - 업로드(invoke)는 useCallback([])이라
+            // 모달이 닫혀도 백그라운드에서 계속 진행되고, 완료 시 sessionRefreshKey/
+            // setShowReport 갱신으로 결과가 반영된다. 실제 취소는 별도 후속 작업.
+            setShowUploadModal(false);
           }}
           onUpload={handleUploadFile}
           processing={uploadProcessing}

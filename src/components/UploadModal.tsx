@@ -42,6 +42,10 @@ export function UploadModal({
         setIsDragOver(true);
       } else if (event.payload.type === "drop") {
         setIsDragOver(false);
+        // 이미 업로드 처리 중이면 새 드롭을 무시 - 동시 업로드 방지
+        if (processing) {
+          return;
+        }
         const first = event.payload.paths[0];
         if (first && isSupported(first)) {
           onUpload(first);
@@ -53,7 +57,7 @@ export function UploadModal({
     return () => {
       unlisten.then((u) => u());
     };
-  }, [onUpload]);
+  }, [onUpload, processing]);
 
   const isSupported = (path: string) => {
     const ext = path.split(".").pop()?.toLowerCase();
@@ -83,14 +87,12 @@ export function UploadModal({
           <h2 className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
             Upload a recording
           </h2>
-          {!processing && (
-            <button
-              onClick={onClose}
-              className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
-            >
-              <XMarkIcon className="w-4 h-4" />
-            </button>
-          )}
+          <button
+            onClick={onClose}
+            className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
+          >
+            <XMarkIcon className="w-4 h-4" />
+          </button>
         </div>
 
         <div className="p-5">
