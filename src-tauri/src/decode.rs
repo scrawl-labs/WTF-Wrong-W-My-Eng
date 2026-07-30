@@ -58,15 +58,17 @@ pub fn decode_file_to_pcm16k(path: &Path) -> Result<Vec<f32>> {
         .codec_params
         .sample_rate
         .ok_or_else(|| anyhow!("샘플레이트 정보를 읽을 수 없습니다"))?;
-    let channels = track
-        .codec_params
-        .channels
-        .map(|c| c.count() as u16)
-        .ok_or_else(|| anyhow!("채널 정보를 읽을 수 없습니다"))?;
 
     let mut decoder = symphonia::default::get_codecs()
         .make(&track.codec_params, &DecoderOptions::default())
         .context("디코더를 생성할 수 없습니다")?;
+
+    // 채널 수는 컨테이너 헤더만으로 알 수 없는 코덱이 있음 (예: m4a의 AAC는
+    // 채널 정보가 AudioSpecificConfig 안에 있어서, 컨테이너 파싱 단계가 아니라
+    // 디코더가 첫 패킷을 실제로 디코딩해야만 codec_params.channels가 아닌
+    // 디코딩된 버퍼의 spec()에서 알 수 있음). 그래서 여기서 미리 요구하지 않고
+    // 첫 프레임을 디코딩한 뒤 그 spec에서 얻는다.
+    let mut channels: Option<u16> = None;
 
     // 인터리브된 f32 샘플을 여기 누적 - SampleBuffer가 원본 포맷(u8/s16/f32/...)
     // 무엇이든 f32로 자동 변환해줘서 포맷별 분기 없이 처리 가능
@@ -97,6 +99,7 @@ pub fn decode_file_to_pcm16k(path: &Path) -> Result<Vec<f32>> {
         if sample_buf.is_none() {
             let spec = *decoded.spec();
             let duration = decoded.capacity() as u64;
+            channels = Some(spec.channels.count() as u16);
             sample_buf = Some(SampleBuffer::<f32>::new(duration, spec));
         }
 
@@ -111,6 +114,9 @@ pub fn decode_file_to_pcm16k(path: &Path) -> Result<Vec<f32>> {
             "오디오 데이터를 읽지 못했습니다 (빈 파일이거나 지원하지 않는 코덱)"
         ));
     }
+    // channels는 sample_buf/samples와 같은 시점에 함께 채워지므로, samples가
+    // 비어있지 않다면 channels도 항상 Some
+    let channels = channels.expect("samples가 비어있지 않으면 channels도 반드시 Some");
 
     let mono = dsp::to_mono(&samples, channels);
     Ok(dsp::resample(&mono, source_rate, WHISPER_SAMPLE_RATE))
@@ -172,5 +178,15 @@ mod tests {
     fn errors_on_missing_file() {
         let result = decode_file_to_pcm16k(Path::new("/nonexistent/path/does-not-exist.wav"));
         assert!(result.is_err());
+    }
+
+    /// 회귀 테스트: m4a(AAC)는 컨테이너 헤더만으로 채널 수를 알 수 없어서,
+    /// 디코더가 첫 패킷을 실제로 디코딩하기 전에 channels를 요구하면
+    /// "채널 정보를 읽을 수 없습니다" 에러로 항상 실패했었음.
+    #[test]
+    fn decodes_m4a_without_upfront_channel_metadata() {
+        let path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/test-tone.m4a"));
+        let pcm = decode_file_to_pcm16k(path).unwrap();
+        assert!(!pcm.is_empty());
     }
 }
