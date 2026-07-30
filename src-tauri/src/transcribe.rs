@@ -104,6 +104,70 @@ pub fn transcribe(audio: &[f32]) -> Result<String> {
     Ok(text.trim().to_string())
 }
 
+/// Whisper 세그먼트 하나 - 텍스트 + 파일 시작 기준 시작/종료 시각(초)
+#[derive(Debug, Clone)]
+pub struct TranscribedSegment {
+    pub text: String,
+    pub start_secs: f32,
+    pub end_secs: f32,
+}
+
+/// 오디오 파일 전체(16kHz 모노)를 한 번에 전사하고, Whisper 자체 세그먼트
+/// 타임스탬프로 발화 단위를 나눠 반환한다.
+///
+/// 라이브 마이크 캡처는 RMS 기반 VAD(audio.rs)로 이미 발화 단위가 나뉜 짧은
+/// 청크만 `transcribe()`에 넘기지만, 업로드 파일은 통째로 넘기고 Whisper가
+/// 내부적으로 발화를 세그먼트로 나누게 한다 - 파일 전체 문맥을 보고 나누므로
+/// 우리 RMS 임계값보다 정확하고, 긴 파일도 한 번의 모델 로드/추론으로 처리된다.
+///
+/// # 인자
+/// * `audio` - 16kHz 모노 f32 샘플 전체
+/// * `on_progress` - 0~100 진행률 콜백 (whisper.cpp가 내부적으로 호출)
+///
+/// # 에러
+/// 모델 로드 실패, Whisper 추론 실패, 세그먼트 조회 실패
+pub fn transcribe_with_segments(
+    audio: &[f32],
+    on_progress: impl FnMut(i32) + 'static,
+) -> Result<Vec<TranscribedSegment>> {
+    let ctx = get_or_init_context()?;
+    let mut state = ctx.create_state().context("Whisper 상태 생성 실패")?;
+
+    let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+    params.set_language(Some("en"));
+    params.set_print_progress(false);
+    params.set_print_realtime(false);
+    params.set_print_timestamps(false);
+    params.set_progress_callback_safe(on_progress);
+
+    state.full(params, audio).context("Whisper 추론 실패")?;
+
+    let n_segments = state.full_n_segments().context("세그먼트 수 조회 실패")?;
+
+    let mut segments = Vec::with_capacity(n_segments as usize);
+    for i in 0..n_segments {
+        let text = state
+            .full_get_segment_text(i)
+            .context("세그먼트 텍스트 조회 실패")?
+            .trim()
+            .to_string();
+        if text.is_empty() {
+            continue;
+        }
+        // t0/t1은 10ms 단위(centisecond)로 반환됨 - 초 단위로 변환
+        let t0 = state.full_get_segment_t0(i).context("세그먼트 시작 시각 조회 실패")?;
+        let t1 = state.full_get_segment_t1(i).context("세그먼트 종료 시각 조회 실패")?;
+
+        segments.push(TranscribedSegment {
+            text,
+            start_secs: t0 as f32 / 100.0,
+            end_secs: t1 as f32 / 100.0,
+        });
+    }
+
+    Ok(segments)
+}
+
 /// Whisper 모델이 없으면 자동으로 다운로드 (비개발자가 터미널에서 curl을 직접
 /// 칠 필요가 없도록). 이미 있으면 즉시 반환. 진행률은 "setup-progress" 이벤트로 emit됨.
 pub async fn ensure_model_downloaded(app: &AppHandle) -> Result<()> {
