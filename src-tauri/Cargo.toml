@@ -24,6 +24,9 @@ serde_json = "1"
 # Audio capture
 cpal = "0.15"
 
+# 파일 업로드 오디오 디코딩 (wav/mp3/m4a) - 순수 Rust, 외부 바이너리 불필요
+symphonia = { version = "0.5", features = ["mp3", "aac", "isomp4", "wav"] }
+
 # Whisper STT (로컬 음성 인식)
 whisper-rs = { version = "0.13", features = ["metal"] }
 
