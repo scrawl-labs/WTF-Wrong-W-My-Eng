@@ -6,11 +6,12 @@
 // - String formatting: format! 매크로
 // - std::fs: 파일시스템 작업
 
-use crate::feedback::FeedbackResult;
+use crate::feedback::{self, FeedbackResult};
 use anyhow::Result;
 use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use tauri::{AppHandle, Emitter};
 
 /// 한 번의 발화와 그에 대한 피드백
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -26,6 +27,109 @@ pub struct Utterance {
 pub struct RawUtterance {
     pub timestamp: String,
     pub text: String,
+}
+
+/// 세션이 라이브 녹음으로 만들어졌는지, 파일 업로드로 만들어졌는지
+/// `<base>.source` 사이드카 파일로 저장됨 (.title/.txt와 동일한 패턴)
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SessionSource {
+    Recorded,
+    Uploaded { original_filename: String },
+}
+
+/// `<base>.source` 사이드카에 세션 출처를 저장
+fn save_source_sidecar(md_path: &PathBuf, source: &SessionSource) -> Result<()> {
+    let path = md_path.with_extension("source");
+    let content = match source {
+        SessionSource::Recorded => "recorded".to_string(),
+        SessionSource::Uploaded { original_filename } => {
+            format!("uploaded\n{original_filename}")
+        }
+    };
+    std::fs::write(path, content)?;
+    Ok(())
+}
+
+/// `<base>.source` 사이드카를 읽음 - 없으면(과거 세션) Recorded로 취급
+fn read_source_sidecar(md_path: &PathBuf) -> SessionSource {
+    let path = md_path.with_extension("source");
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return SessionSource::Recorded;
+    };
+    let mut lines = content.lines();
+    match lines.next() {
+        Some("uploaded") => SessionSource::Uploaded {
+            original_filename: lines.next().unwrap_or("").to_string(),
+        },
+        _ => SessionSource::Recorded,
+    }
+}
+
+/// 리포트 생성(발화별 LLM 피드백) 진행률 - "session-progress" 이벤트로 emit됨
+#[derive(Debug, Clone, Serialize)]
+struct SessionProgress {
+    stage: String, // "generating_feedback"
+    current: usize,
+    total: usize,
+}
+
+/// 전문(raw_utterances)을 바탕으로 발화별 LLM 피드백을 일괄 생성하고 리포트를
+/// 저장한다. 라이브 녹음(stop_session)과 파일 업로드(start_session_from_file)가
+/// 이 함수 하나를 공유해서 리포트 생성 로직이 완전히 하나로 유지된다.
+///
+/// # 반환값
+/// 저장된 마크다운 파일의 절대 경로 (문자열)
+pub async fn finalize_session(
+    app: &AppHandle,
+    raw_utterances: &[RawUtterance],
+    start_time: &DateTime<Local>,
+    source: SessionSource,
+) -> Result<String> {
+    // 전문(.txt)은 피드백 생성 여부와 무관하게 먼저 저장 - 실패해도 원문은 남도록
+    if let Err(e) = save_transcript(raw_utterances, start_time) {
+        eprintln!("[Session] 전문 저장 실패: {e}");
+    }
+
+    let total = raw_utterances.len();
+    let mut utterances = Vec::with_capacity(total);
+    for (i, raw) in raw_utterances.iter().enumerate() {
+        let _ = app.emit(
+            "session-progress",
+            SessionProgress {
+                stage: "generating_feedback".to_string(),
+                current: i + 1,
+                total,
+            },
+        );
+
+        match feedback::get_feedback(&raw.text).await {
+            Ok(fb) => utterances.push(Utterance {
+                timestamp: raw.timestamp.clone(),
+                feedback: fb,
+            }),
+            Err(e) => {
+                eprintln!("[Feedback] \"{}\" 처리 실패: {e}", raw.text);
+                utterances.push(Utterance {
+                    timestamp: raw.timestamp.clone(),
+                    feedback: FeedbackResult {
+                        original: raw.text.clone(),
+                        corrected: None,
+                        better_expression: None,
+                        idiom_or_vocab: None,
+                        has_error: false,
+                    },
+                });
+            }
+        }
+    }
+
+    let path = save_report(&utterances, start_time)?;
+    if let Err(e) = save_source_sidecar(&path, &source) {
+        eprintln!("[Session] 출처 사이드카 저장 실패: {e}");
+    }
+
+    Ok(path.to_string_lossy().to_string())
 }
 
 /// 세션 리포트 저장 디렉터리
@@ -212,6 +316,7 @@ pub struct SessionInfo {
     pub filename: String,  // "2025-01-20_14-30-45.md"
     pub title: String,     // "Jan 20, 2:30 PM"
     pub path: String,      // 절대 경로
+    pub source: SessionSource,
 }
 
 pub fn list_sessions() -> Result<Vec<SessionInfo>> {
@@ -237,6 +342,7 @@ pub fn list_sessions() -> Result<Vec<SessionInfo>> {
                     filename: filename.to_string(),
                     title,
                     path: path.to_string_lossy().to_string(),
+                    source: read_source_sidecar(&path),
                 });
             }
         }
@@ -264,6 +370,7 @@ pub fn get_session_info(md_path: &str) -> SessionInfo {
         filename,
         title,
         path: md_path.to_string(),
+        source: read_source_sidecar(&path),
     }
 }
 
