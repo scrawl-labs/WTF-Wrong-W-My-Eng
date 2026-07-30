@@ -393,7 +393,7 @@ export function App() {
 
         <div className="flex flex-1 overflow-hidden">
           {/* 중앙 컨텐츠 */}
-          <main className="flex flex-col flex-1 min-w-0 overflow-y-auto px-6 py-6 bg-zinc-50 dark:bg-zinc-950">
+          <main className="flex flex-col flex-1 min-w-0 min-h-0 overflow-y-auto px-6 py-6 bg-zinc-50 dark:bg-zinc-950">
             {/* 에러 배너 */}
             {errorMsg && (
               <div className="flex items-start gap-3 mb-5 p-3.5 bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800/50 rounded-lg">
@@ -601,7 +601,7 @@ export function App() {
                 </button>
               )}
             </div>
-            <div className="flex-1 overflow-y-auto p-5">
+            <div className="flex-1 min-h-0 overflow-y-auto p-5">
               {showTranscript ? (
                 <TranscriptView
                   text={
