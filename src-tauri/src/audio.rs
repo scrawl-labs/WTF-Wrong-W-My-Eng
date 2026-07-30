@@ -8,6 +8,7 @@
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::mpsc;
+use crate::dsp::{resample, to_mono};
 
 /// Whisper가 기대하는 샘플레이트
 const WHISPER_SAMPLE_RATE: u32 = 16_000;
@@ -106,41 +107,6 @@ pub fn start_capture(tx: mpsc::SyncSender<Vec<f32>>) -> anyhow::Result<cpal::Str
 
     stream.play()?;
     Ok(stream)
-}
-
-/// 스테레오(또는 멀티채널) → 모노 변환
-/// 채널들의 평균값을 취함
-fn to_mono(samples: &[f32], channels: u16) -> Vec<f32> {
-    if channels == 1 {
-        return samples.to_vec();
-    }
-    // chunks(n): n개씩 묶어서 이터레이션 → 각 프레임
-    samples
-        .chunks(channels as usize)
-        .map(|frame| frame.iter().sum::<f32>() / channels as f32)
-        .collect()
-}
-
-/// 선형 보간 기반 리샘플링
-/// from_rate → to_rate 로 변환
-fn resample(samples: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
-    if from_rate == to_rate {
-        return samples.to_vec();
-    }
-
-    let ratio = from_rate as f64 / to_rate as f64;
-    let output_len = (samples.len() as f64 / ratio) as usize;
-
-    (0..output_len)
-        .map(|i| {
-            let src_pos = i as f64 * ratio;
-            let floor = src_pos as usize;
-            let ceil = (floor + 1).min(samples.len() - 1);
-            let frac = (src_pos - floor as f64) as f32;
-            // 선형 보간: floor와 ceil 사이를 frac 비율로 보간
-            samples[floor] * (1.0 - frac) + samples[ceil] * frac
-        })
-        .collect()
 }
 
 /// RMS (Root Mean Square) - 오디오 신호의 평균 에너지

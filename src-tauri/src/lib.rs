@@ -1,5 +1,6 @@
 mod audio;
 mod commands;
+mod dsp;
 mod feedback;
 mod ollama;
 mod session;
