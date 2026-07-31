@@ -15,6 +15,7 @@ import {
 import { RecordingStatus } from "./components/RecordingStatus";
 import { TranscriptView } from "./components/TranscriptView";
 import { SessionReport } from "./components/SessionReport";
+import { SessionLog } from "./components/SessionLog";
 import { SessionList, SessionInfo } from "./components/SessionList";
 import { UploadModal } from "./components/UploadModal";
 import {
@@ -520,63 +521,15 @@ export function App() {
               </div>
             ) : null}
 
-            {/* 최근 세션 utterances 테이블 — 리포트 직후 또는 과거 세션 선택 시 표시 */}
-            {showReport && utterances.length === 0 && !selectedSessionMarkdown && (
-              <div className="mt-5 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-12 flex flex-col items-center justify-center gap-2 text-center">
-                <DocumentTextIcon className="w-6 h-6 text-zinc-300 dark:text-zinc-700" />
-                <p className="text-xs text-zinc-400 dark:text-zinc-600">
-                  No speech was captured in this session.
-                </p>
-              </div>
-            )}
-            {showReport && utterances.length > 0 && (
-              <div className="mt-5 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl overflow-hidden">
-                <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800">
-                  <h2 className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
-                    Corrections
-                  </h2>
-                </div>
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="border-b border-zinc-100 dark:border-zinc-800">
-                      <th className="px-6 py-3 text-left font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wider">
-                        Time
-                      </th>
-                      <th className="px-6 py-3 text-left font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wider">
-                        You said
-                      </th>
-                      <th className="px-6 py-3 text-left font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wider">
-                        Status
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-zinc-50 dark:divide-zinc-800">
-                    {utterances.map((u, idx) => (
-                      <tr
-                        key={idx}
-                        className="hover:bg-zinc-50 dark:hover:bg-zinc-800/50"
-                      >
-                        <td className="px-6 py-3 font-mono text-zinc-400 dark:text-zinc-500 tabular-nums whitespace-nowrap">
-                          {u.timestamp}
-                        </td>
-                        <td className="px-6 py-3 text-zinc-700 dark:text-zinc-300">
-                          {u.feedback.original}
-                        </td>
-                        <td className="px-6 py-3">
-                          {u.feedback.has_error ? (
-                            <span className="inline-flex px-2 py-0.5 rounded text-xs font-medium bg-red-50 dark:bg-red-950 text-red-600 dark:text-red-400">
-                              Needs correction
-                            </span>
-                          ) : (
-                            <span className="inline-flex px-2 py-0.5 rounded text-xs font-medium bg-emerald-50 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400">
-                              Good
-                            </span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+            {/* 리포트 상세 — 통계 + Corrections/Vocabulary 탭 (리포트 직후 또는 과거 세션 선택 시 표시) */}
+            {showReport && (
+              <div className="mt-5">
+                <SessionReport
+                  utterances={utterances}
+                  reportPath={reportPath}
+                  isVisible={true}
+                  markdownContent={selectedSessionMarkdown}
+                />
               </div>
             )}
           </main>
@@ -630,12 +583,7 @@ export function App() {
                   </p>
                 </div>
               ) : showReport ? (
-                <SessionReport
-                  utterances={utterances}
-                  reportPath={reportPath}
-                  isVisible={true}
-                  markdownContent={selectedSessionMarkdown}
-                />
+                <SessionLog utterances={utterances} />
               ) : (
                 <div className="flex flex-col items-center justify-center h-full gap-2 select-none">
                   <p className="text-xs text-zinc-400 dark:text-zinc-600 text-center leading-relaxed">
