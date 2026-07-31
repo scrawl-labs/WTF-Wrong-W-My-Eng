@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Utterance } from "../types";
 
 interface SessionReportProps {
@@ -7,12 +8,16 @@ interface SessionReportProps {
   markdownContent?: string;
 }
 
+type ReportTab = "corrections" | "vocabulary";
+
 export function SessionReport({
   utterances,
   reportPath,
   isVisible,
   markdownContent,
 }: SessionReportProps) {
+  const [activeTab, setActiveTab] = useState<ReportTab>("corrections");
+
   if (!isVisible) return null;
 
   // 구조화된 발화 기록(JSON)이 있으면 항상 이걸 우선 사용 — 라이브 리포트와 동일한 카드 UI.
@@ -43,6 +48,7 @@ export function SessionReport({
         .map((u) => u.feedback.idiom_or_vocab),
     ),
   ];
+  const corrections = utterances.filter((u) => u.feedback.has_error);
 
   return (
     <div className="space-y-6">
@@ -84,35 +90,33 @@ export function SessionReport({
         </div>
       </div>
 
-      {/* 어휘 */}
-      {vocabItems.length > 0 && (
-        <div>
-          <h3 className="text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-2">
-            New Vocabulary
-          </h3>
-          <div className="space-y-1">
-            {vocabItems.map((vocab, idx) => (
-              <div
-                key={idx}
-                className="text-sm text-zinc-700 dark:text-zinc-300 py-1.5 border-b border-zinc-50 dark:border-zinc-800/50 last:border-0 break-words"
-              >
-                {vocab}
-              </div>
-            ))}
-          </div>
+      {/* 탭 전환: Corrections / Vocabulary */}
+      <div>
+        <div className="flex gap-1 border-b border-zinc-100 dark:border-zinc-800 mb-4">
+          {(
+            [
+              { key: "corrections", label: "Corrections" },
+              { key: "vocabulary", label: "Vocabulary" },
+            ] as const
+          ).map(({ key, label }) => (
+            <button
+              key={key}
+              onClick={() => setActiveTab(key)}
+              className={`px-3 py-2 text-xs font-medium border-b-2 -mb-px transition-colors cursor-pointer ${
+                activeTab === key
+                  ? "border-zinc-900 dark:border-white text-zinc-900 dark:text-white"
+                  : "border-transparent text-zinc-400 dark:text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-300"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
         </div>
-      )}
 
-      {/* 교정 목록 */}
-      {errorCount > 0 && (
-        <div>
-          <h3 className="text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-2">
-            Corrections
-          </h3>
-          <div className="space-y-3">
-            {utterances
-              .filter((u) => u.feedback.has_error)
-              .map((u, idx) => (
+        {activeTab === "corrections" ? (
+          corrections.length > 0 ? (
+            <div className="space-y-3">
+              {corrections.map((u, idx) => (
                 <div
                   key={idx}
                   className="border-l-2 border-red-200 dark:border-red-800 pl-3"
@@ -135,9 +139,29 @@ export function SessionReport({
                   )}
                 </div>
               ))}
+            </div>
+          ) : (
+            <p className="text-xs text-zinc-400 dark:text-zinc-600 text-center py-6">
+              No corrections needed — nice work!
+            </p>
+          )
+        ) : vocabItems.length > 0 ? (
+          <div className="space-y-1">
+            {vocabItems.map((vocab, idx) => (
+              <div
+                key={idx}
+                className="text-sm text-zinc-700 dark:text-zinc-300 py-1.5 border-b border-zinc-50 dark:border-zinc-800/50 last:border-0 break-words"
+              >
+                {vocab}
+              </div>
+            ))}
           </div>
-        </div>
-      )}
+        ) : (
+          <p className="text-xs text-zinc-400 dark:text-zinc-600 text-center py-6">
+            No new vocabulary this session.
+          </p>
+        )}
+      </div>
 
       {reportPath && (
         <p className="text-xs text-zinc-400 dark:text-zinc-600 font-mono truncate pt-2 border-t border-zinc-100 dark:border-zinc-800">
