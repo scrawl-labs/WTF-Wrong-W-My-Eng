@@ -463,6 +463,12 @@ export function App() {
                     </span>{" "}
                     in the sidebar to start recording.
                   </p>
+                  <p className="text-xs text-zinc-300 dark:text-zinc-700 text-center leading-relaxed max-w-xs">
+                    Using speakers instead of earphones? Your mic may also
+                    pick up the other person's voice. Turn on macOS's{" "}
+                    <span className="font-medium">Voice Isolation</span> mic
+                    mode (Control Center → Mic Mode) to filter it out.
+                  </p>
                 </div>
 
                 {stats && stats.total_sessions > 0 ? (
