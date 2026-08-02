@@ -146,15 +146,33 @@ export function SessionReport({
             </p>
           )
         ) : vocabItems.length > 0 ? (
-          <div className="space-y-1">
-            {vocabItems.map((vocab, idx) => (
-              <div
-                key={idx}
-                className="text-sm text-zinc-700 dark:text-zinc-300 py-1.5 border-b border-zinc-50 dark:border-zinc-800/50 last:border-0 break-words"
-              >
-                {vocab}
-              </div>
-            ))}
+          <div className="space-y-3">
+            {vocabItems.map((vocab, idx) => {
+              // 백엔드가 "표현: 뜻" 형식으로 내려주는 문자열을 상하로 분리해서
+              // 표현은 굵게, 뜻은 아래 작은 글씨로 — 한 줄로 붙어 있으면 읽기 힘들다는 피드백
+              const text = vocab ?? "";
+              const separatorIndex = text.indexOf(":");
+              const term =
+                separatorIndex === -1 ? text : text.slice(0, separatorIndex).trim();
+              const meaning =
+                separatorIndex === -1 ? "" : text.slice(separatorIndex + 1).trim();
+
+              return (
+                <div
+                  key={idx}
+                  className="py-1.5 border-b border-zinc-50 dark:border-zinc-800/50 last:border-0"
+                >
+                  <div className="text-sm font-medium text-zinc-800 dark:text-zinc-200 break-words">
+                    {term}
+                  </div>
+                  {meaning && (
+                    <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 break-words">
+                      {meaning}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         ) : (
           <p className="text-xs text-zinc-400 dark:text-zinc-600 text-center py-6">
